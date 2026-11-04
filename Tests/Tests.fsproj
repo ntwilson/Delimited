@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -8,7 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="UnitTest1.fs" />
+    <Compile Include="FieldSpec.fs" />
+    <Compile Include="DecodeSpec.fs" />
+    <Compile Include="EncodeSpec.fs" />
+    <Compile Include="CsvSpec.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
