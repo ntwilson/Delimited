@@ -7,12 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Field.fs" />
     <Compile Include="Row.fs" />
     <Compile Include="Decode.fs" />
     <Compile Include="Encode.fs" />
+    <Compile Include="Codec.fs" />
     <Compile Include="Options.fs" />
-    <Compile Include="Csv.fs" />
+    <Compile Include="Table.fs" />
   </ItemGroup>
 
   <ItemGroup>

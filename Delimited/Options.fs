@@ -2,7 +2,7 @@ namespace Delimited
 
 open Sylvan.Data.Csv
 
-type CsvOptions =
+type TableOptions =
   {
     /// ValueNone auto-detects when reading and writes commas.
     Delimiter: char voption
@@ -13,7 +13,7 @@ type CsvOptions =
     ConfigureWriter: CsvDataWriterOptions -> unit
   }
 
-module CsvOptions =
+module TableOptions =
   let csv =
     {
       Delimiter = ValueSome ','
@@ -29,12 +29,12 @@ module CsvOptions =
 
   let autoDetect = { csv with Delimiter = ValueNone }
 
-  let withDelimiter (delimiter: char) (options: CsvOptions) =
+  let withDelimiter (delimiter: char) (options: TableOptions) =
     { options with Delimiter = ValueSome delimiter }
 
-  let withoutHeaders (options: CsvOptions) = { options with HasHeaders = false }
+  let withoutHeaders (options: TableOptions) = { options with HasHeaders = false }
 
-  let internal toReaderOptions (options: CsvOptions) : CsvDataReaderOptions =
+  let internal toReaderOptions (options: TableOptions) : CsvDataReaderOptions =
     // WE MANAGE THE TEXTREADER'S LIFETIME OURSELVES, SO A CALLER'S READER ISN'T CLOSED UNDER THEM.
     let o =
       CsvDataReaderOptions(HasHeaders = options.HasHeaders, Quote = options.Quote, OwnsReader = false)
@@ -46,7 +46,7 @@ module CsvOptions =
     options.ConfigureReader o
     o
 
-  let internal toWriterOptions (options: CsvOptions) : CsvDataWriterOptions =
+  let internal toWriterOptions (options: TableOptions) : CsvDataWriterOptions =
     let o =
       CsvDataWriterOptions(
         WriteHeaders = options.HasHeaders,

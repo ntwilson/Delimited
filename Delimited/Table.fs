@@ -2,6 +2,7 @@ namespace Delimited
 
 open System
 open System.Collections.Generic
+open System.Data.Common
 open System.IO
 open System.Text
 open System.Threading
@@ -44,7 +45,7 @@ type internal KeepOpenWriter(inner: TextWriter) =
   override _.FlushAsync() = inner.FlushAsync()
   override _.Dispose(_: bool) = inner.Flush()
 
-module Csv =
+module Table =
   let private noop =
     { new IDisposable with
         member _.Dispose() = ()
@@ -74,7 +75,7 @@ module Csv =
       struct (w, w)
     | Sink.Writer w -> struct (w, noop)
 
-  let private headersOf (options: CsvOptions) (csv: CsvDataReader) =
+  let private headersOf (options: TableOptions) (csv: CsvDataReader) =
     if options.HasHeaders then
       Array.init csv.FieldCount csv.GetName
     else
@@ -89,17 +90,24 @@ module Csv =
       GetString = csv.GetString
     }
 
-  let private orFail (result: Result<'T, DecodeError list>) : 'T =
+  let private orFail (result: Result<'a, DecodeError list>) : 'a =
     match result with
     | Ok v -> v
     | Error errors -> raise (DecodeException errors)
 
   /// Streams decoded rows. The source is opened when enumeration starts and closed when it ends.
-  let read (options: CsvOptions) (decoder: Decoder<'T>) (source: Source) : TaskSeq<Result<'T, DecodeError list>> =
+  let readAsync
+    (options: TableOptions)
+    (decoder: RowDecoder<'a>)
+    (source: Source)
+    : TaskSeq<Result<'a, DecodeError list>> =
     taskSeq {
       let struct (textReader, owner) = openReader source
       use _ = owner
-      let! csv = CsvDataReader.CreateAsync(textReader, CsvOptions.toReaderOptions options)
+
+      let! csv =
+        CsvDataReader.CreateAsync(textReader, TableOptions.toReaderOptions options)
+
       use _ = csv
       let headers = headersOf options csv
       let ordinals = Row.ordinalsOf headers
@@ -116,16 +124,16 @@ module Csv =
           more <- false
     }
 
-  /// Like `read`, but throws a DecodeException at the first row that fails.
-  let readOrFail (options: CsvOptions) (decoder: Decoder<'T>) (source: Source) : TaskSeq<'T> =
-    read options decoder source |> TaskSeq.map orFail
+  /// Like `readAsync`, but throws a DecodeException at the first row that fails.
+  let readOrFailAsync (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : TaskSeq<'a> =
+    readAsync options decoder source |> TaskSeq.map orFail
 
-  /// The synchronous version of `read`.
-  let readSeq (options: CsvOptions) (decoder: Decoder<'T>) (source: Source) : Result<'T, DecodeError list> seq =
+  /// The synchronous version of `readAsync`.
+  let read (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : Result<'a, DecodeError list> seq =
     seq {
       let struct (textReader, owner) = openReader source
       use _ = owner
-      use csv = CsvDataReader.Create(textReader, CsvOptions.toReaderOptions options)
+      use csv = CsvDataReader.Create(textReader, TableOptions.toReaderOptions options)
       let headers = headersOf options csv
       let ordinals = Row.ordinalsOf headers
 
@@ -135,60 +143,101 @@ module Csv =
         |> Seq.map (fun number -> decoder (rowOf number headers ordinals csv))
     }
 
+  /// Like `read`, but throws a DecodeException at the first row that fails.
+  let readOrFail (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a seq =
+    read options decoder source |> Seq.map orFail
+
+  // VALUES ARE DROPPED ONCE ANY ROW FAILS, SO A BAD FILE DOESN'T HOLD EVERY ROW IN MEMORY.
+  let private collect (state: Result<'a list, DecodeError list>) (result: Result<'a, DecodeError list>) =
+    match state, result with
+    | Ok values, Ok v -> Ok(v :: values)
+    | Ok _, Error e -> Error(List.rev e)
+    | Error errors, Ok _ -> Error errors
+    | Error errors, Error e -> Error(List.rev e @ errors)
+
+  let private finish (state: Result<'a list, DecodeError list>) =
+    state |> Result.map List.rev |> Result.mapError List.rev
+
+  /// Reads every row eagerly: Ok if all rows decode, otherwise the errors from every failing row.
+  let readAllAsync
+    (options: TableOptions)
+    (decoder: RowDecoder<'a>)
+    (source: Source)
+    : Task<Result<'a list, DecodeError list>> =
+    task {
+      let! state = readAsync options decoder source |> TaskSeq.fold collect (Ok [])
+      return finish state
+    }
+
+  /// The synchronous version of `readAllAsync`.
+  let readAll (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : Result<'a list, DecodeError list> =
+    read options decoder source |> Seq.fold collect (Ok []) |> finish
+
   /// Full access to Sylvan's reader, for anything the codecs don't cover.
-  let withReader (options: CsvOptions) (source: Source) (f: CsvDataReader -> Task<'A>) : Task<'A> =
+  let withReaderAsync (options: TableOptions) (source: Source) (f: CsvDataReader -> Task<'a>) : Task<'a> =
     task {
       let struct (textReader, owner) = openReader source
       use _ = owner
-      use! csv = CsvDataReader.CreateAsync(textReader, CsvOptions.toReaderOptions options)
+
+      use! csv =
+        CsvDataReader.CreateAsync(textReader, TableOptions.toReaderOptions options)
+
       return! f csv
     }
 
-  let private builder (encoder: Encoder<'T>) : ObjectDataReader.Builder<'T> =
-    encoder
-    |> List.fold
-      (fun (b: ObjectDataReader.Builder<'T>) (header, get) -> b.AddColumn<string>(header, Func<'T, string> get))
-      (ObjectDataReader.Builder<'T>())
+  let private builder (encoder: RowEncoder<'a>) : ObjectDataReader.Builder<'a> =
+    (ObjectDataReader.Builder<'a>(), encoder)
+    ||> List.fold (fun b (header, get) -> b.AddColumn<string>(header, Func<'a, string> get))
+
 
   // SYLVAN CLOSES THE TEXTWRITER WHEN THE CSVDATAWRITER IS DISPOSED; WE OWN THAT LIFETIME INSTEAD.
   let private csvWriter options textWriter =
-    CsvDataWriter.Create(new KeepOpenWriter(textWriter), CsvOptions.toWriterOptions options)
+    CsvDataWriter.Create(new KeepOpenWriter(textWriter), TableOptions.toWriterOptions options)
 
-  let write (options: CsvOptions) (encoder: Encoder<'T>) (sink: Sink) (rows: 'T seq) : unit =
+  /// Writes any DbDataReader, e.g. query results, without an encoder.
+  let writeDataReader (options: TableOptions) (sink: Sink) (reader: DbDataReader) =
     let struct (textWriter, owner) = openWriter sink
     use _ = owner
     use csv = csvWriter options textWriter
-    csv.Write((builder encoder).Build rows) |> ignore
+    csv.Write reader
 
-  let writeAsync
-    (options: CsvOptions)
-    (encoder: Encoder<'T>)
+  /// The asynchronous version of `writeDataReader`.
+  let writeDataReaderAsync
+    (options: TableOptions)
     (sink: Sink)
-    (rows: TaskSeq<'T>)
+    (reader: DbDataReader)
     (cancellationToken: CancellationToken)
-    : Task =
+    =
     task {
       let struct (textWriter, owner) = openWriter sink
       use _ = owner
       use csv = csvWriter options textWriter
-
-      let! _ =
-        csv.WriteAsync((builder encoder).Build(rows, cancellationToken), cancellationToken)
-
-      ()
+      return! csv.WriteAsync(reader, cancellationToken)
     }
 
-  let writeString (options: CsvOptions) (encoder: Encoder<'T>) (rows: 'T seq) : string =
+  let write (options: TableOptions) (encoder: RowEncoder<'a>) (sink: Sink) (rows: 'a seq) =
+    writeDataReader options sink ((builder encoder).Build rows)
+
+  let writeAsync
+    (options: TableOptions)
+    (encoder: RowEncoder<'a>)
+    (sink: Sink)
+    (rows: TaskSeq<'a>)
+    (cancellationToken: CancellationToken)
+    =
+    writeDataReaderAsync options sink ((builder encoder).Build(rows, cancellationToken)) cancellationToken
+
+  let writeString (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string =
     use w = new StringWriter()
-    write options encoder (Sink.Writer w) rows
-    w.ToString()
+    write options encoder (Sink.Writer w) rows |> ignore
+    string w
 
   /// Decodes rows that are already split into fields. With headers, the first row is the header row.
   let decodeRows
-    (options: CsvOptions)
-    (decoder: Decoder<'T>)
+    (options: TableOptions)
+    (decoder: RowDecoder<'a>)
     (rows: string seq seq)
-    : Result<'T, DecodeError list> seq =
+    : Result<'a, DecodeError list> seq =
     let arrays = rows |> Seq.map Seq.toArray
 
     match options.HasHeaders, Seq.tryHead arrays with
@@ -207,7 +256,7 @@ module Csv =
       |> Seq.mapi (fun i values -> decoder (Row.ofArray (int64 (i + 1)) [||] ordinals values))
 
   /// Encodes to rows of fields, with a header row first when `options.HasHeaders`.
-  let encodeRows (options: CsvOptions) (encoder: Encoder<'T>) (rows: 'T seq) : string seq seq =
+  let encodeRows (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string seq seq =
     let headers =
       if options.HasHeaders then
         Seq.singleton (encoder |> List.map fst :> string seq)

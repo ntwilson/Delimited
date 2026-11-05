@@ -3,7 +3,7 @@ namespace Delimited
 open System
 open System.Collections.Generic
 
-/// One record being decoded. ONLY VALID DURING THE DECODER CALL: WHEN READING A FILE IT READS THE LIVE SYLVAN READER.
+/// One row being decoded. Only needed for decoding.
 type Row =
   {
     /// 1-based data row number, not counting the header.
@@ -14,7 +14,7 @@ type Row =
     GetString: int -> string
   }
 
-module Row =
+module internal Row =
   /// When headers repeat, the first one wins.
   let ordinalsOf (headers: string[]) : IReadOnlyDictionary<string, int> =
     headers

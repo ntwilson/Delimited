@@ -8,10 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="FieldSpec.fs" />
     <Compile Include="DecodeSpec.fs" />
     <Compile Include="EncodeSpec.fs" />
-    <Compile Include="CsvSpec.fs" />
+    <Compile Include="CodecSpec.fs" />
+    <Compile Include="TableSpec.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
