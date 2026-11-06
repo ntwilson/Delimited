@@ -6,6 +6,29 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <PackageId>Delimited</PackageId>
+    <!-- RELEASES TAKE THEIR VERSION FROM THE GIT TAG (SEE publish.yml); THIS ONLY MARKS LOCAL PACKS. -->
+    <Version>0.0.0-local</Version>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <Authors>Nathan Wilson</Authors>
+    <Description>F# codecs for reading and writing delimited text (CSV, TSV), built on Sylvan.Data.Csv.</Description>
+    <PackageTags>fsharp;csv;tsv;delimited;codec;parser</PackageTags>
+    <PackageLicenseExpression>CC0-1.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ntwilson/Delimited</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ntwilson/Delimited.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <DebugType>embedded</DebugType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="Row.fs" />
     <Compile Include="Decode.fs" />

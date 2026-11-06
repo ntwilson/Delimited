@@ -113,3 +113,5 @@ You can use the `ConfigureReader`/`ConfigureWriter` fields in `TableOptions` to 
 ## Development
 
 Run the tests in Release (`dotnet test -c Release`). In Debug builds, `taskSeq` code that awaits a task that really suspends (such as a file read) can silently yield nothing. This is a known compiler issue that is fixed in a newer SDK.
+
+To test the NuGet package itself rather than the project, run `./test-package.ps1`. It packs into `artifacts/` and runs `PackageTests` against that package.
