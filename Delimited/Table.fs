@@ -147,31 +147,27 @@ module Table =
   let readOrFail (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a seq =
     read options decoder source |> Seq.map orFail
 
-  // VALUES ARE DROPPED ONCE ANY ROW FAILS, SO A BAD FILE DOESN'T HOLD EVERY ROW IN MEMORY.
-  let private collect (state: Result<'a list, DecodeError list>) (result: Result<'a, DecodeError list>) =
-    match state, result with
-    | Ok values, Ok v -> Ok(v :: values)
-    | Ok _, Error e -> Error(List.rev e)
-    | Error errors, Ok _ -> Error errors
-    | Error errors, Error e -> Error(List.rev e @ errors)
+  let private collect (values: 'a list, errors: DecodeError list) (result: Result<'a, DecodeError list>) =
+    match result with
+    | Ok v -> v :: values, errors
+    | Error e -> values, List.rev e @ errors
 
-  let private finish (state: Result<'a list, DecodeError list>) =
-    state |> Result.map List.rev |> Result.mapError List.rev
+  let private finish (values: 'a list, errors: DecodeError list) = List.rev values, List.rev errors
 
-  /// Reads every row eagerly: Ok if all rows decode, otherwise the errors from every failing row.
+  /// Reads every row eagerly, giving the values of the rows that decode and the errors from those that don't.
   let readAllAsync
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
     (source: Source)
-    : Task<Result<'a list, DecodeError list>> =
+    : Task<'a list * DecodeError list> =
     task {
-      let! state = readAsync options decoder source |> TaskSeq.fold collect (Ok [])
+      let! state = readAsync options decoder source |> TaskSeq.fold collect ([], [])
       return finish state
     }
 
   /// The synchronous version of `readAllAsync`.
-  let readAll (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : Result<'a list, DecodeError list> =
-    read options decoder source |> Seq.fold collect (Ok []) |> finish
+  let readAll (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a list * DecodeError list =
+    read options decoder source |> Seq.fold collect ([], []) |> finish
 
   /// Full access to Sylvan's reader, for anything the codecs don't cover.
   let withReaderAsync (options: TableOptions) (source: Source) (f: CsvDataReader -> Task<'a>) : Task<'a> =

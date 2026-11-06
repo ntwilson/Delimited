@@ -26,11 +26,13 @@ let rows = Table.readAsync TableOptions.csv reading (Source.File "readings.csv")
 
 // Or throw a DecodeException on the first bad row:
 let! all = Table.readOrFailAsync TableOptions.tsv reading (Source.Stream stream) |> TaskSeq.toListAsync
+
+// Or eagerly read and split on successfully parsed rows and failures
+let! (successes, failures) = Table.readAll TableOptions.csv reading (Source.File "readings.csv")
 ```
 
 Sources: `Source.File`, `Source.Stream`, `Source.Reader`, `Source.Text`. A stream or reader you pass in is left open.
 `Table.read` is the synchronous version, and `Table.decodeRows` decodes an in-memory `string seq seq`.
-`Table.readAll` (and `readAllAsync`) reads every row eagerly, giving `Ok` with all the values or `Error` with the errors from every failing row.
 
 ## Writing
 

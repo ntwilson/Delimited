@@ -85,7 +85,8 @@ let ``read returns decode errors per row`` () =
 [<Test>]
 let ``readOrFailAsync throws on a bad row`` () =
   let ex =
-    Assert.Throws<System.AggregateException>(fun () -> readOrFailList TableOptions.csv (Source.Text "id,text\nx,a\n") |> ignore)
+    Assert.Throws<System.AggregateException>(fun () ->
+      readOrFailList TableOptions.csv (Source.Text "id,text\nx,a\n") |> ignore)
 
   test <@ (ex.InnerException :? DecodeException) @>
 
@@ -96,30 +97,31 @@ let ``readAll returns every row when all decode`` () =
   test
     <@
       Table.readAll TableOptions.csv noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n") =
-        Ok [ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ]
+        ([ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ], [])
     @>
 
 [<Test>]
-let ``readAll returns the errors from every failing row in order`` () =
-  let actual = Table.readAll TableOptions.csv noteCodec.Decode mixedRows
-  test <@ actual |> Result.mapError (List.map _.Row) = Error [ 2L; 4L ] @>
+let ``readAll returns the passing rows and the errors from every failing row in order`` () =
+  let values, errors = Table.readAll TableOptions.csv noteCodec.Decode mixedRows
+  test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
+  test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
 [<Test>]
-let ``readAll of an empty table is Ok empty`` () =
-  test <@ Table.readAll TableOptions.csv noteCodec.Decode (Source.Text "id,text\n") = Ok [] @>
+let ``readAll of an empty table is empty`` () =
+  test <@ Table.readAll TableOptions.csv noteCodec.Decode (Source.Text "id,text\n") = ([], []) @>
 
 [<Test>]
 let ``readAllAsync returns every row when all decode`` () =
   let actual =
-    (Table.readAllAsync TableOptions.csv noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n"))
-      .Result
+    (Table.readAllAsync TableOptions.csv noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n")).Result
 
-  test <@ actual = Ok [ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ] @>
+  test <@ actual = ([ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ], []) @>
 
 [<Test>]
-let ``readAllAsync returns the errors from every failing row in order`` () =
-  let actual = (Table.readAllAsync TableOptions.csv noteCodec.Decode mixedRows).Result
-  test <@ actual |> Result.mapError (List.map _.Row) = Error [ 2L; 4L ] @>
+let ``readAllAsync returns the passing rows and the errors from every failing row in order`` () =
+  let values, errors = (Table.readAllAsync TableOptions.csv noteCodec.Decode mixedRows).Result
+  test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
+  test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
 [<Test>]
 let ``writeAsync streams a taskSeq to a file`` () =
@@ -167,7 +169,10 @@ let noteTable () =
 let ``writeDataReader round-trips a DbDataReader`` () =
   use table = noteTable ()
   use w = new StringWriter()
-  Table.writeDataReader TableOptions.csv (Sink.Writer w) (table.CreateDataReader()) |> ignore
+
+  Table.writeDataReader TableOptions.csv (Sink.Writer w) (table.CreateDataReader())
+  |> ignore
+
   test <@ readOrFailList TableOptions.csv (Source.Text(string w)) = tricky @>
 
 [<Test>]
@@ -175,8 +180,7 @@ let ``writeDataReaderAsync round-trips a DbDataReader`` () =
   use table = noteTable ()
   use w = new StringWriter()
 
-  (Table.writeDataReaderAsync TableOptions.csv (Sink.Writer w) (table.CreateDataReader()) CancellationToken.None)
-    .Wait()
+  (Table.writeDataReaderAsync TableOptions.csv (Sink.Writer w) (table.CreateDataReader()) CancellationToken.None).Wait()
 
   test <@ readOrFailList TableOptions.csv (Source.Text(string w)) = tricky @>
 
