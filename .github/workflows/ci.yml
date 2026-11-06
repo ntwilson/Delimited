@@ -22,6 +22,10 @@ jobs:
       - name: Test
         run: dotnet test Tests/Tests.fsproj -c Release
 
+      - name: Pack and test package
+        shell: pwsh
+        run: ./test-package.ps1
+
   check-format:
     runs-on: ubuntu-latest
     steps:
