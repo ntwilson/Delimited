@@ -87,10 +87,16 @@ let ``row codec writes columns in declaration order`` () =
 [<Test>]
 let ``row codec round-trips through text`` () =
   let values =
-    [ { Name = "a"; Temp = 1.5; Count = Some 2 }; { Name = "b, c"; Temp = -0.1; Count = None } ]
+    [
+      { Name = "a"; Temp = 1.5; Count = Some 2 }
+      { Name = "b, c"; Temp = -0.1; Count = None }
+    ]
 
   let text = Table.writeString TableOptions.csv reading.Encode values
-  let actual = Table.read TableOptions.csv reading.Decode (Source.Text text) |> List.ofSeq
+
+  let actual =
+    Table.read TableOptions.csv reading.Decode (Source.Text text) |> List.ofSeq
+
   test <@ actual = List.map Ok values @>
 
 [<Test>]
@@ -113,7 +119,10 @@ let ``row codec reports every bad field`` () =
 
 [<Test>]
 let ``row codec decodes a missing optional column as None`` () =
-  let actual = Table.read TableOptions.csv reading.Decode (Source.Text "name,temp\na,1\n") |> List.ofSeq
+  let actual =
+    Table.read TableOptions.csv reading.Decode (Source.Text "name,temp\na,1\n")
+    |> List.ofSeq
+
   test <@ actual = [ Ok { Name = "a"; Temp = 1.0; Count = None } ] @>
 
 type Tagged = Tagged of Reading

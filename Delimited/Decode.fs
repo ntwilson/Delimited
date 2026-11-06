@@ -211,12 +211,26 @@ module Decode =
             match decoder value with
             | Ok v -> Ok(KeyValuePair(header, v))
             | Error message ->
-              Error { Row = row.Number; Problem = InvalidValue({ Index = i; Header = Some header }, value, message) })
+              Error
+                {
+                  Row = row.Number
+                  Problem = InvalidValue({ Index = i; Header = Some header }, value, message)
+                })
           |> Seq.toList
 
-        match decoded |> List.choose (function Error e -> Some e | Ok _ -> None) with
+        match
+          decoded
+          |> List.choose (function
+            | Error e -> Some e
+            | Ok _ -> None)
+        with
         | [] ->
-          let pairs = decoded |> List.choose (function Ok kv -> Some kv | Error _ -> None)
+          let pairs =
+            decoded
+            |> List.choose (function
+              | Ok kv -> Some kv
+              | Error _ -> None)
+
           Ok(Dictionary(pairs, StringComparer.Ordinal) :> IReadOnlyDictionary<_, _>)
         | errors -> Error errors
 
@@ -224,8 +238,7 @@ type RowDecoderBuilder() =
   member _.Return(value: 'a) : RowDecoder<'a> = Decode.Row.succeed value
   member _.ReturnFrom(decoder: RowDecoder<'a>) : RowDecoder<'a> = decoder
 
-  member _.Bind(decoder: RowDecoder<'a>, f: 'a -> RowDecoder<'b>) : RowDecoder<'b> =
-    Decode.Row.andThen f decoder
+  member _.Bind(decoder: RowDecoder<'a>, f: 'a -> RowDecoder<'b>) : RowDecoder<'b> = Decode.Row.andThen f decoder
 
   member _.BindReturn(decoder: RowDecoder<'a>, f: 'a -> 'b) : RowDecoder<'b> = Decode.Row.map f decoder
 

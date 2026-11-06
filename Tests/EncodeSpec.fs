@@ -29,7 +29,10 @@ let ``encodes records with a header row`` () =
 [<Test>]
 let ``dictionary writes empty for a missing key`` () =
   let d = Dictionary<string, string>(dict [ "a", "1" ])
-  let actual = encode TableOptions.csv (Encode.dictionary [ "a"; "b" ] Encode.string) [ d ]
+
+  let actual =
+    encode TableOptions.csv (Encode.dictionary [ "a"; "b" ] Encode.string) [ d ]
+
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
 [<Test>]

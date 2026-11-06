@@ -103,8 +103,7 @@ let ``missing column and short rows`` () =
 
 [<Test>]
 let ``index works without headers`` () =
-  let d =
-    Decode.Row.map2 (+) (Decode.index 0 Decode.int) (Decode.index 1 Decode.int)
+  let d = Decode.Row.map2 (+) (Decode.index 0 Decode.int) (Decode.index 1 Decode.int)
 
   let actual =
     Table.decodeRows (TableOptions.withoutHeaders TableOptions.csv) d (rows [ [ "1"; "2" ]; [ "3"; "4" ] ])
@@ -161,7 +160,9 @@ let ``oneOf takes the first success`` () =
         Decode.field "x" Decode.float
       ]
 
-  let actual = Table.decodeRows TableOptions.csv d (rows [ [ "x" ]; [ "2" ]; [ "2.5" ] ])
+  let actual =
+    Table.decodeRows TableOptions.csv d (rows [ [ "x" ]; [ "2" ]; [ "2.5" ] ])
+
   test <@ List.ofSeq actual = [ Ok 2.0; Ok 2.5 ] @>
 
 [<Test>]

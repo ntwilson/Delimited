@@ -119,7 +119,9 @@ let ``readAllAsync returns every row when all decode`` () =
 
 [<Test>]
 let ``readAllAsync returns the passing rows and the errors from every failing row in order`` () =
-  let values, errors = (Table.readAllAsync TableOptions.csv noteCodec.Decode mixedRows).Result
+  let values, errors =
+    (Table.readAllAsync TableOptions.csv noteCodec.Decode mixedRows).Result
+
   test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
   test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
