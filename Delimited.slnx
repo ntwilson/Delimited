@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Delimited/Delimited.fsproj" />
+  <Project Path="Tests/Tests.fsproj" />
+</Solution>
