@@ -54,7 +54,7 @@ let text = Table.writeString (TableOptions.withDelimiter '|' TableOptions.csv) e
 
 ## Custom fields
 
-A `FieldDecoder<'a>` is just `string -> Result<'a, string>` and a `FieldEncoder<'a>` is `'a -> string`, so if you only read or only write you only write that half:
+A `FieldDecoder<'a>` is just `string -> Result<'a, string>` and a `FieldEncoder<'a>` is `'a -> string`, so you can define your own decoders and encoders to be able to work with any custom field:
 
 ```fsharp
 let yesNo : FieldDecoder<bool> = function "Y" -> Ok true | "N" -> Ok false | s -> Error $"bad flag %s{s}"
@@ -73,7 +73,7 @@ let yesNoCodec = Codec.Field.create yesNo (fun b -> if b then "Y" else "N")
 
 ## Reading and writing the same file
 
-A `RowCodec<'a>` declares each column once and gives you both a decoder and an encoder:
+The `codec` builder declares each column once and gives you both a decoder and an encoder:
 
 ```fsharp
 let reading : RowCodec<Reading> =
@@ -85,7 +85,7 @@ let reading : RowCodec<Reading> =
   }
 
 let rows = Table.readAsync TableOptions.csv reading.Decode (Source.File "readings.csv")
-Table.write TableOptions.csv reading.Encode (Sink.File "out.csv") readings |> ignore
+Table.write TableOptions.tsv reading.Encode (Sink.File "out.tsv") readings |> ignore
 ```
 
 `Codec.Row.map` converts a finished codec in both directions, like `Codec.Field.map`.
@@ -102,7 +102,13 @@ Dynamic shapes are ordinary decoders and encoders, so they work with every sourc
 
 ## Options
 
-`TableOptions.csv`, `TableOptions.tsv` and `TableOptions.autoDetect` (detects the delimiter when reading) are the presets. Use `withDelimiter` and `withoutHeaders` to adjust them, and `ConfigureReader`/`ConfigureWriter` to reach any other Sylvan setting.
+`TableOptions.csv`, `TableOptions.tsv`, `TableOptions.psv`, and `TableOptions.autoDetect` (detects the delimiter when reading) are the presets. Use `withDelimiter` and `withoutHeaders` to adjust them, or manually adjust the options such as
+
+```fsharp
+{ TableOptions.csv with HasHeaders = false; Delimiter = ValueSome ';' }
+```
+
+You can use the `ConfigureReader`/`ConfigureWriter` fields in `TableOptions` to reach any other Sylvan setting.
 
 ## Development
 
