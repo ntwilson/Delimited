@@ -28,11 +28,15 @@ let rows = Table.readAsync TableOptions.csv reading (Source.File "readings.csv")
 let! all = Table.readOrFailAsync TableOptions.tsv reading (Source.Stream stream) |> TaskSeq.toListAsync
 
 // Or eagerly read and split on successfully parsed rows and failures
-let! (successes, failures) = Table.readAll TableOptions.csv reading (Source.File "readings.csv")
+let! (successes, failures) = Table.readAllAsync TableOptions.csv reading (Source.File "readings.csv")
 ```
 
 Sources: `Source.File`, `Source.Stream`, `Source.Reader`, `Source.Text`. A stream or reader you pass in is left open.
 `Table.read` is the synchronous version, and `Table.decodeRows` decodes an in-memory `string seq seq`.
+
+Date and time decoders take an exact format. For ISO 8601 (`2026-03-14T10:00:00Z`), use `dateTimeIso`, `dateTimeOffsetIso`, `dateOnlyIso` or `timeOnlyIso`, which also exist in `Encode` and `Codec`. When decoding, these accept basic (`20260314T1000`) or extended format, a space instead of the `T`, minutes and seconds optional, and a fraction after `.` or `,`. They don't accept week or ordinal dates, fractional hours or minutes, or `24:00`, because .NET's exact-format parsing can't express them. `dateTimeIso` converts any offset to UTC, and `dateTimeOffsetIso` requires an offset or `Z`.
+
+When the format isn't known in advance, use `Decode.dateTimeAuto`, `dateTimeOffsetAuto`, `dateOnlyAuto` or `timeOnlyAuto`. These accept anything the invariant culture recognizes, so an ambiguous date like `03/04/2026` is read month first.
 
 ## Writing
 
@@ -64,12 +68,24 @@ let celsius = Encode.float |> Encode.Field.contramap (fun (Celsius c) -> c)
 
 Combinators that exist for both fields and rows live in `Decode.Field`/`Decode.Row` and `Encode.Field`/`Encode.Row`.
 
+`Decode.Field.either` and `Decode.Row.either` try one decoder and fall back to a second. To try more than two, reduce a list with them:
+
+```fsharp
+let when' =
+  [ "yyyy-MM-dd"; "MM/dd/yyyy"; "dd.MM.yyyy" ]
+  |> List.map Decode.dateTime
+  |> List.reduce Decode.Field.either
+  |> Decode.field "when"
+```
+
 `FieldCodec<'a>` pairs a decoder with an encoder when you need both; pass `codec.Decode` to `Decode.field` and `codec.Encode` to `Encode.field`:
 
 ```fsharp
 let celsius = Codec.float |> Codec.Field.map Celsius (fun (Celsius c) -> c)
 let yesNoCodec = Codec.Field.create yesNo (fun b -> if b then "Y" else "N")
 ```
+
+`Codec.result` and `Codec.choiceOf2` round-trip only when no text is accepted by both codecs. With `Codec.choiceOf2 Codec.float Codec.int`, `Choice2Of2 3` is written as `3` and read back as `Choice1Of2 3.0`.
 
 ## Reading and writing the same file
 
@@ -95,8 +111,10 @@ Table.write TableOptions.tsv reading.Encode (Sink.File "out.tsv") readings |> ig
 
 Dynamic shapes are ordinary decoders and encoders, so they work with every source and sink:
 
-- `Decode.fields` gives `string[]`; `Decode.dictionary Decode.string` gives `IReadOnlyDictionary<string, string>`
+- `Decode.fields` gives `string[]`; `Decode.dictionary Decode.string` gives `Dictionary<string, string>` of every column
+- `Decode.dictionaryOf headers Decode.string` gives only the listed columns, each of which must exist
 - `Encode.fields headers` writes `string[]`; `Encode.dictionary headers Encode.string` writes `IDictionary<string, string>`
+- `Codec.dictionary headers Codec.float _.Readings` combines the two inside `codec { }`; use `Codec.option` when cells can be blank
 - `Table.withReaderAsync options source (fun csvDataReader -> task { ... })` gives you Sylvan's raw `CsvDataReader`
 - `Table.writeDataReader options sink dbDataReader` (and `writeDataReaderAsync`) writes any `DbDataReader`, such as query results, without an encoder
 

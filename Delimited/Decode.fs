@@ -12,6 +12,7 @@ type DecodeProblem =
   | MissingField of Column * fieldCount: int
   | InvalidValue of Column * value: string * message: string
   | RowFailed of message: string
+  | NoHeaderRow
 
 type DecodeError = { Row: int64; Problem: DecodeProblem }
 
@@ -28,6 +29,7 @@ module DecodeError =
       | MissingField(c, fieldCount) -> $"%s{describeColumn c} is missing; the row has only %i{fieldCount} fields"
       | InvalidValue(c, value, message) -> $"%s{describeColumn c} has value \"%s{value}\": %s{message}"
       | RowFailed message -> message
+      | NoHeaderRow -> "the table has no header row, so columns can't be found by name"
 
     $"Row %i{e.Row}: %s{detail}"
 
@@ -41,12 +43,35 @@ type FieldDecoder<'a> = string -> Result<'a, string>
 /// Decodes one row. Errors are a list so independent fields can all report at once.
 type RowDecoder<'a> = Row -> Result<'a, DecodeError list>
 
+module internal Results =
+  let collect (values: 'a list, errors: 'e list) (result: Result<'a, 'e list>) =
+    match result with
+    | Ok v -> v :: values, errors
+    | Error e -> values, List.rev e @ errors
+
+  let finish (values: 'a list, errors: 'e list) = List.rev values, List.rev errors
+
+  /// The values of the Ok results and the errors of the rest, each in order.
+  let partition (results: Result<'a, 'e list> seq) =
+    results |> Seq.fold collect ([], []) |> finish
+
 module Decode =
   module Field =
     let map (f: 'a -> 'b) (decoder: FieldDecoder<'a>) : FieldDecoder<'b> = decoder >> Result.map f
 
     /// Like `map`, but may fail with a message.
     let andThen (f: 'a -> Result<'b, string>) (decoder: FieldDecoder<'a>) : FieldDecoder<'b> = decoder >> Result.bind f
+
+    /// `first` if it succeeds, else `second`; when both fail, both messages joined.
+    /// For more than two, use `List.reduce Decode.Field.either`.
+    let either (first: FieldDecoder<'a>) (second: FieldDecoder<'a>) : FieldDecoder<'a> =
+      fun s ->
+        match first s with
+        | Ok v -> Ok v
+        | Error e1 ->
+          match second s with
+          | Ok v -> Ok v
+          | Error e2 -> Error $"%s{e1}, or %s{e2}"
 
   module Row =
     let private error (row: Row) (problem: DecodeProblem) =
@@ -71,18 +96,16 @@ module Decode =
     let andThen (f: 'a -> RowDecoder<'b>) (decoder: RowDecoder<'a>) : RowDecoder<'b> =
       fun row -> decoder row |> Result.bind (fun a -> f a row)
 
-    /// The first decoder that succeeds; otherwise the errors from all of them.
-    let oneOf (decoders: RowDecoder<'a> list) : RowDecoder<'a> =
+    /// `first` if it succeeds, else `second`; when both fail, the errors from both.
+    /// For more than two, use `List.reduce Decode.Row.either`.
+    let either (first: RowDecoder<'a>) (second: RowDecoder<'a>) : RowDecoder<'a> =
       fun row ->
-        let rec go errors =
-          function
-          | [] -> Error(List.rev errors |> List.concat)
-          | (d: RowDecoder<'a>) :: rest ->
-            match d row with
-            | Ok v -> Ok v
-            | Error e -> go (e :: errors) rest
-
-        go [] decoders
+        match first row with
+        | Ok v -> Ok v
+        | Error e1 ->
+          match second row with
+          | Ok v -> Ok v
+          | Error e2 -> Error(e1 @ e2)
 
   let private inv = CultureInfo.InvariantCulture
 
@@ -97,10 +120,12 @@ module Decode =
   let string: FieldDecoder<string> = Ok
 
   let int: FieldDecoder<int> =
-    ofTryParse "an integer" (fun s -> Int32.TryParse(s, NumberStyles.Integer, inv))
+    ofTryParse "a 32-bit integer" (fun s ->
+      Int32.TryParse(s, NumberStyles.Integer ||| NumberStyles.AllowThousands, inv))
 
   let int64: FieldDecoder<int64> =
-    ofTryParse "an integer" (fun s -> Int64.TryParse(s, NumberStyles.Integer, inv))
+    ofTryParse "a 64-bit integer" (fun s ->
+      Int64.TryParse(s, NumberStyles.Integer ||| NumberStyles.AllowThousands, inv))
 
   let float: FieldDecoder<float> =
     ofTryParse "a number" (fun s -> Double.TryParse(s, NumberStyles.Float ||| NumberStyles.AllowThousands, inv))
@@ -121,12 +146,48 @@ module Decode =
     ofTryParse $"a date/time offset formatted as %s{format}" (fun s ->
       DateTimeOffset.TryParseExact(s, format, inv, DateTimeStyles.None))
 
+
+  // WITHOUT RoundtripKind, A "Z" OR OFFSET SUFFIX WOULD BE CONVERTED TO THE MACHINE'S LOCAL TIME.
+  /// Uses the invariant culture, so an ambiguous date like 03/04 is read month first.
+  let dateTimeAuto: FieldDecoder<DateTime> =
+    ofTryParse "a date/time" (fun s -> DateTime.TryParse(s, inv, DateTimeStyles.RoundtripKind))
+
+  /// Uses the invariant culture, so an ambiguous date like 03/04 is read month first.
+  let dateTimeOffsetAuto: FieldDecoder<DateTimeOffset> =
+    ofTryParse "a date/time offset" (fun s -> DateTimeOffset.TryParse(s, inv, DateTimeStyles.None))
+
+  /// A space may replace the "T". An offset is converted to UTC; without one, the Kind is Unspecified.
+  let dateTimeIso: FieldDecoder<DateTime> =
+    ofTryParse "an ISO 8601 date/time" (fun s ->
+      DateTime.TryParseExact(s, Iso8601.dateTimeFormats, inv, DateTimeStyles.AdjustToUniversal))
+
+  /// Like `dateTimeIso`, but requires an offset or "Z" and keeps it.
+  let dateTimeOffsetIso: FieldDecoder<DateTimeOffset> =
+    ofTryParse "an ISO 8601 date/time with an offset" (fun s ->
+      DateTimeOffset.TryParseExact(s, Iso8601.dateTimeOffsetFormats, inv, DateTimeStyles.AssumeUniversal))
+
 #if NET6_0_OR_GREATER
   let dateOnly (format: string) : FieldDecoder<DateOnly> =
     ofTryParse $"a date formatted as %s{format}" (fun s -> DateOnly.TryParseExact(s, format, inv, DateTimeStyles.None))
 
   let timeOnly (format: string) : FieldDecoder<TimeOnly> =
     ofTryParse $"a time formatted as %s{format}" (fun s -> TimeOnly.TryParseExact(s, format, inv, DateTimeStyles.None))
+
+  /// Uses the invariant culture, so an ambiguous date like 03/04 is read month first.
+  let dateOnlyAuto: FieldDecoder<DateOnly> =
+    ofTryParse "a date" (fun s -> DateOnly.TryParse(s, inv, DateTimeStyles.None))
+
+  let timeOnlyAuto: FieldDecoder<TimeOnly> =
+    ofTryParse "a time" (fun s -> TimeOnly.TryParse(s, inv, DateTimeStyles.None))
+
+  let dateOnlyIso: FieldDecoder<DateOnly> =
+    ofTryParse "an ISO 8601 date" (fun s ->
+      DateOnly.TryParseExact(s, Iso8601.dateOnlyFormats, inv, DateTimeStyles.None))
+
+  /// May start with "T"; an offset is rejected, since TimeOnly can't hold it.
+  let timeOnlyIso: FieldDecoder<TimeOnly> =
+    ofTryParse "an ISO 8601 time" (fun s ->
+      TimeOnly.TryParseExact(s, Iso8601.timeOnlyFormats, inv, DateTimeStyles.None))
 #endif
 
   /// A blank field decodes to None.
@@ -153,14 +214,13 @@ module Decode =
       | Error _, Ok e -> Ok(Error e)
       | Error e, Error _ -> Error e
 
+  /// Prefers `left` when both accept the field; when neither does, both messages joined.
   let choiceOf2 (left: FieldDecoder<'a>) (right: FieldDecoder<'b>) : FieldDecoder<Choice<'a, 'b>> =
-    result left right
-    |> Field.map (function
-      | Ok a -> Choice1Of2 a
-      | Error b -> Choice2Of2 b)
+    Field.either (left |> Field.map Choice1Of2) (right |> Field.map Choice2Of2)
 
   let private singleFieldAt (index: int) (decoder: FieldDecoder<'a>) (row: Row) =
-    let column = { Index = index; Header = row.Headers |> Array.tryItem index }
+    let column =
+      { Index = index; Header = row.Headers |> Option.bind (Array.tryItem index) }
 
     match Delimited.Row.tryGet index row with
     | ValueNone -> Error { Row = row.Number; Problem = MissingField(column, row.FieldCount) }
@@ -171,15 +231,16 @@ module Decode =
 
   let private singleField (header: string) (decoder: FieldDecoder<'a>) =
     fun row ->
-      match Delimited.Row.tryOrdinal header row with
-      | ValueSome i -> singleFieldAt i decoder row
-      | ValueNone -> Error { Row = row.Number; Problem = ColumnNotFound header }
+      match row.Headers, Delimited.Row.tryOrdinal header row with
+      | None, _ -> Error { Row = row.Number; Problem = NoHeaderRow }
+      | Some _, ValueSome i -> singleFieldAt i decoder row
+      | Some _, ValueNone -> Error { Row = row.Number; Problem = ColumnNotFound header }
 
   /// The named column, which must exist.
   let field (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
     singleField header decoder >> Result.mapError List.singleton
 
-  /// None when the column is missing, the row is short, or the field is blank.
+  /// None when the column is missing, the row is short, or the field is blank. Fails if the table has no header row.
   let optionalField (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
     fun row ->
       match singleField header (option decoder) row with
@@ -196,43 +257,25 @@ module Decode =
   let fields: RowDecoder<string[]> =
     fun row -> Ok(Array.init row.FieldCount row.GetString)
 
-  /// Header -> value. Missing trailing fields are empty strings; a repeated header keeps its first value.
-  let dictionary (decoder: FieldDecoder<'a>) : RowDecoder<IReadOnlyDictionary<string, 'a>> =
+  /// The listed columns, keyed by header; each must exist. A repeated header is read once.
+  let dictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
     fun row ->
-      if Array.isEmpty row.Headers then
-        Error [ { Row = row.Number; Problem = RowFailed "Decode.dictionary needs headers" } ]
+      if row.Headers.IsNone then
+        Error [ { Row = row.Number; Problem = NoHeaderRow } ]
       else
-        let decoded =
-          row.Ordinals
-          |> Seq.sortBy _.Value
-          |> Seq.map (fun (KeyValue(header, i)) ->
-            let value = Delimited.Row.tryGet i row |> ValueOption.defaultValue ""
+        let pairs, errors =
+          headers
+          |> List.distinct
+          |> Seq.map (fun h -> field h decoder row |> Result.map (fun v -> KeyValuePair(h, v)))
+          |> Results.partition
 
-            match decoder value with
-            | Ok v -> Ok(KeyValuePair(header, v))
-            | Error message ->
-              Error
-                {
-                  Row = row.Number
-                  Problem = InvalidValue({ Index = i; Header = Some header }, value, message)
-                })
-          |> Seq.toList
-
-        match
-          decoded
-          |> List.choose (function
-            | Error e -> Some e
-            | Ok _ -> None)
-        with
-        | [] ->
-          let pairs =
-            decoded
-            |> List.choose (function
-              | Ok kv -> Some kv
-              | Error _ -> None)
-
-          Ok(Dictionary(pairs, StringComparer.Ordinal) :> IReadOnlyDictionary<_, _>)
+        match errors with
+        | [] -> Ok(Dictionary(pairs, StringComparer.Ordinal))
         | errors -> Error errors
+
+  /// Every column, keyed by header. A repeated header keeps its first value.
+  let dictionary (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
+    fun row -> dictionaryOf (row.Headers |> Option.defaultValue [||] |> List.ofArray) decoder row
 
 type RowDecoderBuilder() =
   member _.Return(value: 'a) : RowDecoder<'a> = Decode.Row.succeed value

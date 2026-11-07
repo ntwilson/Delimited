@@ -19,7 +19,49 @@ let ``primitive codecs round-trip`` () =
   test <@ roundTrip Codec.string "a,b" = Ok "a,b" @>
   let g = Guid.NewGuid()
   test <@ roundTrip Codec.guid g = Ok g @>
+  test <@ roundTrip (Codec.voption Codec.int) (ValueSome 3) = Ok(ValueSome 3) @>
+  test <@ roundTrip (Codec.voption Codec.int) ValueNone = Ok ValueNone @>
+
+[<Test>]
+let ``formatted date/time codecs round-trip`` () =
+  let local = DateTime(2026, 3, 14, 10, 30, 0)
+  let offset = DateTimeOffset(2026, 3, 14, 10, 30, 0, TimeSpan.FromHours -5.0)
+  test <@ (Codec.dateTime "yyyy-MM-dd HH:mm").Encode local = "2026-03-14 10:30" @>
+  test <@ roundTrip (Codec.dateTime "yyyy-MM-dd HH:mm") local = Ok local @>
+  test <@ (Codec.dateTimeOffset "yyyy-MM-dd HH:mm zzz").Encode offset = "2026-03-14 10:30 -05:00" @>
+
+  let minusFive = TimeSpan.FromHours -5.0
+  let decoded = roundTrip (Codec.dateTimeOffset "yyyy-MM-dd HH:mm zzz") offset
+  test <@ decoded |> Result.map (fun d -> d, d.Offset) = Ok(offset, minusFive) @>
+
+[<Test>]
+let ``ISO codecs write ISO 8601 and round-trip`` () =
+  let utc = DateTime(2026, 3, 14, 10, 0, 0, 500, DateTimeKind.Utc)
+  let offset = DateTimeOffset(2026, 3, 14, 10, 0, 0, TimeSpan.FromHours 2.0)
+  test <@ Codec.dateTimeIso.Encode utc = "2026-03-14T10:00:00.5Z" @>
+  test <@ Codec.dateTimeIso.Encode(DateTime(2026, 3, 14, 10, 0, 0)) = "2026-03-14T10:00:00" @>
+  test <@ Codec.dateTimeOffsetIso.Encode offset = "2026-03-14T10:00:00+02:00" @>
+
+  test <@ roundTrip Codec.dateTimeIso utc |> Result.map (fun d -> d, d.Kind) = Ok(utc, DateTimeKind.Utc) @>
+  let twoHours = TimeSpan.FromHours 2.0
+  test <@ roundTrip Codec.dateTimeOffsetIso offset |> Result.map _.Offset = Ok twoHours @>
+
+#if !LIBRARY_NETSTANDARD
+[<Test>]
+let ``DateOnly and TimeOnly codecs round-trip`` () =
   test <@ roundTrip (Codec.dateOnly "yyyy-MM-dd") (DateOnly(2026, 11, 3)) = Ok(DateOnly(2026, 11, 3)) @>
+  test <@ roundTrip (Codec.timeOnly "HH:mm:ss") (TimeOnly(13, 45, 30)) = Ok(TimeOnly(13, 45, 30)) @>
+  test <@ Codec.dateOnlyIso.Encode(DateOnly(2026, 3, 14)) = "2026-03-14" @>
+  test <@ Codec.timeOnlyIso.Encode(TimeOnly(13, 45)) = "13:45:00" @>
+  test <@ roundTrip Codec.dateOnlyIso (DateOnly(2026, 3, 14)) = Ok(DateOnly(2026, 3, 14)) @>
+  test <@ roundTrip Codec.timeOnlyIso (TimeOnly(13, 45, 30, 250)) = Ok(TimeOnly(13, 45, 30, 250)) @>
+#endif
+
+[<Test>]
+let ``dateTimeIso round-trips a Local value as the same instant in UTC`` () =
+  let local = DateTime(2026, 3, 14, 10, 0, 0, DateTimeKind.Local)
+  let utc = local.ToUniversalTime()
+  test <@ roundTrip Codec.dateTimeIso local = Ok utc @>
 
 [<Test>]
 let ``option round-trips None through a blank field`` () =
@@ -75,6 +117,50 @@ let reading: RowCodec<Reading> =
     return { Name = name; Temp = temp; Count = count }
   }
 
+type Site = { Id: int; Readings: Collections.Generic.Dictionary<string, float option> }
+
+let site =
+  codec {
+    let! id = Codec.field "id" Codec.int _.Id
+
+    and! readings =
+      Codec.dictionary [ "jan"; "feb" ] (Codec.option Codec.float) _.Readings
+
+    return { Id = id; Readings = readings }
+  }
+
+[<Test>]
+let ``dictionary codec round-trips alongside other fields`` () =
+  let lines = [ [ "id"; "jan"; "feb" ]; [ "1"; "2.5"; "" ] ]
+
+  let decoded =
+    Table.decodeRows TableOptions.csv site.Decode (Seq.map Seq.ofList lines)
+    |> Seq.choose Result.toOption
+    |> List.ofSeq
+
+  let encoded =
+    Table.encodeRows TableOptions.csv site.Encode decoded
+    |> Seq.map List.ofSeq
+    |> List.ofSeq
+
+  let readings =
+    decoded |> List.map (fun s -> s.Id, s.Readings["jan"], s.Readings["feb"])
+
+  test <@ readings = [ 1, Some 2.5, None ] @>
+  test <@ encoded = lines @>
+
+[<Test>]
+let ``dictionary codec encodes a missing key as an empty field`` () =
+  let readings =
+    Collections.Generic.Dictionary [ Collections.Generic.KeyValuePair("jan", Some 1.0) ]
+
+  let encoded =
+    Table.encodeRows TableOptions.csv site.Encode [ { Id = 1; Readings = readings } ]
+    |> Seq.map List.ofSeq
+    |> List.ofSeq
+
+  test <@ encoded = [ [ "id"; "jan"; "feb" ]; [ "1"; "1"; "" ] ] @>
+
 [<Test>]
 let ``row codec writes columns in declaration order`` () =
   let actual =
@@ -111,7 +197,7 @@ let ``row codec reports every bad field`` () =
       Error
         [
           InvalidValue({ Index = 1; Header = Some "temp" }, "hot", "Expected a number but got \"hot\"")
-          InvalidValue({ Index = 2; Header = Some "count" }, "many", "Expected an integer but got \"many\"")
+          InvalidValue({ Index = 2; Header = Some "count" }, "many", "Expected a 32-bit integer but got \"many\"")
         ]
     ]
 

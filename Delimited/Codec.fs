@@ -1,5 +1,7 @@
 namespace Delimited
 
+open System.Collections.Generic
+
 /// Decodes a row to 'a and encodes columns from a 'record. Combine with `codec { }` until 'a is 'record.
 type PartialCodec<'record, 'a> = { Decode: RowDecoder<'a>; Encode: RowEncoder<'record> }
 
@@ -66,12 +68,25 @@ module Codec =
   let dateTimeOffset (format: string) : FieldCodec<System.DateTimeOffset> =
     Field.create (Decode.dateTimeOffset format) (Encode.dateTimeOffset format)
 
+  /// A Local value decodes back as the same instant in UTC.
+  let dateTimeIso: FieldCodec<System.DateTime> =
+    Field.create Decode.dateTimeIso Encode.dateTimeIso
+
+  let dateTimeOffsetIso: FieldCodec<System.DateTimeOffset> =
+    Field.create Decode.dateTimeOffsetIso Encode.dateTimeOffsetIso
+
 #if NET6_0_OR_GREATER
   let dateOnly (format: string) : FieldCodec<System.DateOnly> =
     Field.create (Decode.dateOnly format) (Encode.dateOnly format)
 
   let timeOnly (format: string) : FieldCodec<System.TimeOnly> =
     Field.create (Decode.timeOnly format) (Encode.timeOnly format)
+
+  let dateOnlyIso: FieldCodec<System.DateOnly> =
+    Field.create Decode.dateOnlyIso Encode.dateOnlyIso
+
+  let timeOnlyIso: FieldCodec<System.TimeOnly> =
+    Field.create Decode.timeOnlyIso Encode.timeOnlyIso
 #endif
 
   /// A blank field decodes to None; None encodes to an empty field.
@@ -82,11 +97,11 @@ module Codec =
   let voption (codec: FieldCodec<'a>) : FieldCodec<'a voption> =
     Field.create (Decode.voption codec.Decode) (Encode.voption codec.Encode)
 
-  /// AN Error VALUE THAT THE Ok CODEC ALSO ACCEPTS DECODES BACK AS Ok.
+  /// ROUND-TRIPS ONLY IF NO TEXT IS ACCEPTED BY BOTH CODECS: WITH TWO string CODECS, Error "x" DECODES BACK AS Ok "x".
   let result (okCodec: FieldCodec<'a>) (errCodec: FieldCodec<'e>) : FieldCodec<Result<'a, 'e>> =
     Field.create (Decode.result okCodec.Decode errCodec.Decode) (Encode.result okCodec.Encode errCodec.Encode)
 
-  /// A Choice2Of2 VALUE THAT THE LEFT CODEC ALSO ACCEPTS DECODES BACK AS Choice1Of2.
+  /// ROUND-TRIPS ONLY IF NO TEXT IS ACCEPTED BY BOTH CODECS: WITH float THEN int, Choice2Of2 3 DECODES BACK AS Choice1Of2 3.0.
   let choiceOf2 (left: FieldCodec<'a>) (right: FieldCodec<'b>) : FieldCodec<Choice<'a, 'b>> =
     Field.create (Decode.choiceOf2 left.Decode right.Decode) (Encode.choiceOf2 left.Encode right.Encode)
 
@@ -101,6 +116,18 @@ module Codec =
     (getter: 'record -> 'field option)
     : PartialCodec<'record, 'field option> =
     partial (Decode.optionalField header codec.Decode) (Encode.field header (Encode.option codec.Encode) getter)
+
+  /// The listed columns, each of which must exist when decoding. A key missing from the dictionary encodes to an empty field.
+  let dictionary
+    (headers: string list)
+    (codec: FieldCodec<'a>)
+    (getter: 'record -> Dictionary<string, 'a>)
+    : PartialCodec<'record, Dictionary<string, 'a>> =
+    let headers = List.distinct headers
+
+    partial
+      (Decode.dictionaryOf headers codec.Decode)
+      (Encode.dictionary headers codec.Encode |> Encode.Row.contramap getter)
 
 /// NO Bind: ENCODING NEEDS THE FULL COLUMN LIST BEFORE ANY ROW, SO LATER COLUMNS CAN'T DEPEND ON DECODED VALUES.
 type RowCodecBuilder() =

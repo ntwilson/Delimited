@@ -77,9 +77,9 @@ module Table =
 
   let private headersOf (options: TableOptions) (csv: CsvDataReader) =
     if options.HasHeaders then
-      Array.init csv.FieldCount csv.GetName
+      Some(Array.init csv.FieldCount csv.GetName)
     else
-      [||]
+      None
 
   let private rowOf (number: int64) headers ordinals (csv: CsvDataReader) : Row =
     {
@@ -89,6 +89,19 @@ module Table =
       FieldCount = csv.RowFieldCount
       GetString = csv.GetString
     }
+
+  // RowDecoder IS A PLAIN FUNCTION, SO NOTHING STOPS ONE RETURNING Error []; WITHOUT THIS THE ROW WOULD VANISH.
+  let private decodeRow (decoder: RowDecoder<'a>) (row: Row) : Result<'a, DecodeError list> =
+    match decoder row with
+    | Error [] ->
+      Error
+        [
+          {
+            Row = row.Number
+            Problem = RowFailed "The decoder failed without reporting an error"
+          }
+        ]
+    | result -> result
 
   let private orFail (result: Result<'a, DecodeError list>) : 'a =
     match result with
@@ -119,7 +132,7 @@ module Table =
 
         if hasRow then
           number <- number + 1L
-          yield decoder (rowOf number headers ordinals csv)
+          yield decodeRow decoder (rowOf number headers ordinals csv)
         else
           more <- false
     }
@@ -138,21 +151,14 @@ module Table =
       let ordinals = Row.ordinalsOf headers
 
       yield!
-        Seq.initInfinite (fun i -> int64 (i + 1))
+        Seq.unfold (fun i -> Some(i, i + 1L)) 1L
         |> Seq.takeWhile (fun _ -> csv.Read())
-        |> Seq.map (fun number -> decoder (rowOf number headers ordinals csv))
+        |> Seq.map (fun number -> decodeRow decoder (rowOf number headers ordinals csv))
     }
 
   /// Like `read`, but throws a DecodeException at the first row that fails.
   let readOrFail (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a seq =
     read options decoder source |> Seq.map orFail
-
-  let private collect (values: 'a list, errors: DecodeError list) (result: Result<'a, DecodeError list>) =
-    match result with
-    | Ok v -> v :: values, errors
-    | Error e -> values, List.rev e @ errors
-
-  let private finish (values: 'a list, errors: DecodeError list) = List.rev values, List.rev errors
 
   /// Reads every row eagerly, giving the values of the rows that decode and the errors from those that don't.
   let readAllAsync
@@ -161,13 +167,15 @@ module Table =
     (source: Source)
     : Task<'a list * DecodeError list> =
     task {
-      let! state = readAsync options decoder source |> TaskSeq.fold collect ([], [])
-      return finish state
+      let! state =
+        readAsync options decoder source |> TaskSeq.fold Results.collect ([], [])
+
+      return Results.finish state
     }
 
   /// The synchronous version of `readAllAsync`.
   let readAll (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a list * DecodeError list =
-    read options decoder source |> Seq.fold collect ([], []) |> finish
+    read options decoder source |> Results.partition
 
   /// Full access to Sylvan's reader, for anything the codecs don't cover.
   let withReaderAsync (options: TableOptions) (source: Source) (f: CsvDataReader -> Task<'a>) : Task<'a> =
@@ -228,28 +236,36 @@ module Table =
     write options encoder (Sink.Writer w) rows |> ignore
     string w
 
+  let private remaining (e: IEnumerator<'a>) =
+    seq {
+      while e.MoveNext() do
+        yield e.Current
+    }
+
   /// Decodes rows that are already split into fields. With headers, the first row is the header row.
   let decodeRows
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
     (rows: string seq seq)
     : Result<'a, DecodeError list> seq =
-    let arrays = rows |> Seq.map Seq.toArray
+    // ONE ENUMERATOR FOR HEADER AND BODY, SO ONE-SHOT SOURCES ARE READ ONCE.
+    seq {
+      use e = rows.GetEnumerator()
 
-    match options.HasHeaders, Seq.tryHead arrays with
-    | true, None -> Seq.empty
-    | true, Some headers ->
-      let ordinals = Row.ordinalsOf headers
+      if not options.HasHeaders || e.MoveNext() then
+        let headers =
+          if options.HasHeaders then
+            Some(Seq.toArray e.Current)
+          else
+            None
 
-      arrays
-      |> Seq.indexed
-      |> Seq.filter (fun (i, _) -> i > 0)
-      |> Seq.map (fun (i, values) -> decoder (Row.ofArray (int64 i) headers ordinals values))
-    | false, _ ->
-      let ordinals = Row.ordinalsOf [||]
+        let ordinals = Row.ordinalsOf headers
 
-      arrays
-      |> Seq.mapi (fun i values -> decoder (Row.ofArray (int64 (i + 1)) [||] ordinals values))
+        yield!
+          remaining e
+          |> Seq.mapi (fun i values ->
+            decodeRow decoder (Row.ofArray (int64 (i + 1)) headers ordinals (Seq.toArray values)))
+    }
 
   /// Encodes to rows of fields, with a header row first when `options.HasHeaders`.
   let encodeRows (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string seq seq =

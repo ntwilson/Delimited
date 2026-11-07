@@ -5,19 +5,22 @@ open System.Collections.Generic
 
 /// One row being decoded. Only needed for decoding.
 type Row =
-  {
-    /// 1-based data row number, not counting the header.
-    Number: int64
-    Headers: string[]
-    Ordinals: IReadOnlyDictionary<string, int>
-    FieldCount: int
-    GetString: int -> string
-  }
+  internal
+    {
+      /// 1-based data row number, not counting the header.
+      Number: int64
+      /// None when the table has no header row.
+      Headers: string[] option
+      Ordinals: IReadOnlyDictionary<string, int>
+      FieldCount: int
+      GetString: int -> string
+    }
 
 module internal Row =
   /// When headers repeat, the first one wins.
-  let ordinalsOf (headers: string[]) : IReadOnlyDictionary<string, int> =
+  let ordinalsOf (headers: string[] option) : IReadOnlyDictionary<string, int> =
     headers
+    |> Option.defaultValue [||]
     |> Seq.indexed
     |> Seq.distinctBy snd
     |> Seq.map (fun (i, h) -> KeyValuePair(h, i))
@@ -36,7 +39,7 @@ module internal Row =
 
   let ofArray
     (number: int64)
-    (headers: string[])
+    (headers: string[] option)
     (ordinals: IReadOnlyDictionary<string, int>)
     (values: string[])
     : Row =

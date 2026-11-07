@@ -36,6 +36,17 @@ let ``dictionary writes empty for a missing key`` () =
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
 [<Test>]
+let ``a row decoded as a dictionary encodes back to the same row`` () =
+  let lines = [ [ "a"; "b" ]; [ "1"; "2" ] ]
+
+  let decoded =
+    Table.decodeRows TableOptions.csv (Decode.dictionary Decode.string) (Seq.map Seq.ofList lines)
+    |> Seq.choose Result.toOption
+    |> List.ofSeq
+
+  test <@ encode TableOptions.csv (Encode.dictionary [ "a"; "b" ] Encode.string) decoded = lines @>
+
+[<Test>]
 let ``fields pads short rows`` () =
   let actual = encode TableOptions.csv (Encode.fields [ "a"; "b" ]) [ [| "1" |] ]
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>

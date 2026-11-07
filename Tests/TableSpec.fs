@@ -10,6 +10,19 @@ open Swensen.Unquote
 
 open Delimited
 
+[<Test>]
+let ``tests run against the intended library build`` () =
+  let framework =
+    typeof<Source>.Assembly.GetCustomAttributes(typeof<System.Runtime.Versioning.TargetFrameworkAttribute>, false)
+    |> Array.exactlyOne
+    :?> System.Runtime.Versioning.TargetFrameworkAttribute
+
+#if LIBRARY_NETSTANDARD
+  test <@ framework.FrameworkName = ".NETStandard,Version=v2.1" @>
+#else
+  test <@ framework.FrameworkName = ".NETCoreApp,Version=v6.0" @>
+#endif
+
 type Note = { Id: int; Text: string }
 
 let noteCodec: RowCodec<Note> =
@@ -106,6 +119,44 @@ let ``readAll returns the passing rows and the errors from every failing row in 
   test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
   test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
+let silentFailure: RowDecoder<Note> = fun _ -> Error []
+
+[<Test>]
+let ``decodeRows reports a row whose decoder fails with no errors`` () =
+  let rowsOf options rows =
+    Table.decodeRows options silentFailure rows
+    |> Seq.map (Result.mapError (List.map _.Row))
+    |> List.ofSeq
+
+  let fields = [ [ "1"; "a" ]; [ "2"; "b" ] ] |> List.map Seq.ofList
+  let withHeaders = Seq.ofList (Seq.ofList [ "id"; "text" ] :: fields)
+  let noHeaders = { TableOptions.csv with HasHeaders = false }
+
+  test <@ rowsOf TableOptions.csv withHeaders = [ Error [ 1L ]; Error [ 2L ] ] @>
+  test <@ rowsOf noHeaders (Seq.ofList fields) = [ Error [ 1L ]; Error [ 2L ] ] @>
+
+[<Test>]
+let ``readAll reports a row whose decoder fails with no errors`` () =
+  let values, errors = Table.readAll TableOptions.csv silentFailure mixedRows
+  test <@ values = [] @>
+  test <@ errors |> List.map _.Row = [ 1L; 2L; 3L; 4L ] @>
+
+[<Test>]
+let ``readAllAsync reports a row whose decoder fails with no errors`` () =
+  let values, errors =
+    (Table.readAllAsync TableOptions.csv silentFailure mixedRows).Result
+
+  test <@ values = [] @>
+  test <@ errors |> List.map _.Row = [ 1L; 2L; 3L; 4L ] @>
+
+[<Test>]
+let ``readOrFail gives a message when the decoder fails with no errors`` () =
+  let ex =
+    Assert.Throws<DecodeException>(fun () ->
+      Table.readOrFail TableOptions.csv silentFailure mixedRows |> Seq.iter ignore)
+
+  test <@ ex.Message <> "" @>
+
 [<Test>]
 let ``readAll of an empty table is empty`` () =
   test <@ Table.readAll TableOptions.csv noteCodec.Decode (Source.Text "id,text\n") = ([], []) @>
@@ -135,6 +186,29 @@ let ``writeAsync streams a taskSeq to a file`` () =
     test <@ readOrFailList TableOptions.csv (Source.File path) = tricky @>
   finally
     File.Delete path
+
+[<Test>]
+let ``writing to a caller's stream leaves it open`` () =
+  use stream = new MemoryStream()
+
+  Table.write TableOptions.csv noteCodec.Encode (Sink.Stream stream) [ { Id = 1; Text = "a" } ]
+  |> ignore
+
+  test <@ stream.CanWrite @>
+  stream.Position <- 0L
+  test <@ readOrFailList TableOptions.csv (Source.Stream stream) = [ { Id = 1; Text = "a" } ] @>
+
+[<Test>]
+let ``reads a caller's reader and leaves it open`` () =
+  use reader = new StringReader("id,text\n1,a\n")
+
+  let actual =
+    Table.readOrFail TableOptions.csv noteCodec.Decode (Source.Reader reader)
+    |> List.ofSeq
+
+  test <@ actual = [ { Id = 1; Text = "a" } ] @>
+  // A DISPOSED StringReader THROWS HERE INSTEAD OF RETURNING -1.
+  test <@ reader.Peek() = -1 @>
 
 [<Test>]
 let ``writing to a caller's writer leaves it open`` () =

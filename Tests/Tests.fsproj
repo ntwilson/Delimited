@@ -7,6 +7,11 @@
     <GenerateProgramFile>false</GenerateProgramFile>
   </PropertyGroup>
 
+  <!-- THE REFERENCE RESOLVES TO net6.0 BY DEFAULT, SO netstandard2.1 RUNS ONLY WITH -p:LibraryTarget=netstandard2.1. -->
+  <PropertyGroup Condition="'$(LibraryTarget)' == 'netstandard2.1'">
+    <DefineConstants>$(DefineConstants);LIBRARY_NETSTANDARD</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Include="DecodeSpec.fs" />
     <Compile Include="EncodeSpec.fs" />
@@ -25,7 +30,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Delimited\Delimited.fsproj" />
+    <ProjectReference Include="..\Delimited\Delimited.fsproj" Condition="'$(LibraryTarget)' == ''" />
+    <ProjectReference Include="..\Delimited\Delimited.fsproj" Condition="'$(LibraryTarget)' != ''" SetTargetFramework="TargetFramework=$(LibraryTarget)" />
   </ItemGroup>
 
 </Project>

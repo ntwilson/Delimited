@@ -31,6 +31,7 @@
 
   <ItemGroup>
     <Compile Include="Row.fs" />
+    <Compile Include="Iso8601.fs" />
     <Compile Include="Decode.fs" />
     <Compile Include="Encode.fs" />
     <Compile Include="Codec.fs" />

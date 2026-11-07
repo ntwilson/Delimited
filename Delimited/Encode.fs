@@ -31,9 +31,17 @@ module Encode =
   let dateTime (format: string) : FieldEncoder<DateTime> = fun d -> d.ToString(format, inv)
   let dateTimeOffset (format: string) : FieldEncoder<DateTimeOffset> = fun d -> d.ToString(format, inv)
 
+  /// UTC ends in "Z", Local in its offset, and Unspecified in nothing.
+  let dateTimeIso: FieldEncoder<DateTime> = dateTime Iso8601.dateTimeFormat
+
+  let dateTimeOffsetIso: FieldEncoder<DateTimeOffset> =
+    dateTimeOffset Iso8601.dateTimeOffsetFormat
+
 #if NET6_0_OR_GREATER
   let dateOnly (format: string) : FieldEncoder<DateOnly> = fun d -> d.ToString(format, inv)
   let timeOnly (format: string) : FieldEncoder<TimeOnly> = fun t -> t.ToString(format, inv)
+  let dateOnlyIso: FieldEncoder<DateOnly> = dateOnly Iso8601.dateOnlyFormat
+  let timeOnlyIso: FieldEncoder<TimeOnly> = timeOnly Iso8601.timeOnlyFormat
 #endif
 
   /// None encodes to an empty field.
