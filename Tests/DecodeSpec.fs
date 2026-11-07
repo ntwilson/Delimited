@@ -348,6 +348,29 @@ let ``option treats blank as None`` () =
   test <@ Decode.voption Decode.int "x" = Error "Expected a 32-bit integer but got \"x\"" @>
 
 [<Test>]
+let ``optionWith treats only the missing string as None`` () =
+  test <@ Decode.optionWith "NA" Decode.string "NA" = Ok None @>
+  test <@ Decode.optionWith "NA" Decode.string " NA " = Ok None @>
+  test <@ Decode.optionWith "NA" Decode.string "" = Ok(Some "") @>
+  test <@ Decode.optionWith "NA" Decode.string "na" = Ok(Some "na") @>
+  test <@ Decode.voptionWith "NA" Decode.int "NA" = Ok ValueNone @>
+  test <@ Decode.voptionWith "NA" Decode.int "" = Error "Expected a 32-bit integer but got \"\"" @>
+
+[<Test>]
+let ``optionalFieldWith reads the missing string and an absent column as None`` () =
+  let actual =
+    Table.decodeRows
+      TableOptions.csv
+      (Decode.Row.map2
+        (fun a b -> a, b)
+        (Decode.optionalFieldWith "-" "a" Decode.int)
+        (Decode.optionalFieldWith "-" "b" Decode.int))
+      (rows [ [ "a" ]; [ "-" ]; [ "3" ] ])
+    |> List.ofSeq
+
+  test <@ actual = [ Ok(None, None); Ok(Some 3, None) ] @>
+
+[<Test>]
 let ``Field.andThen validates a field`` () =
   let positive =
     Decode.int

@@ -89,13 +89,19 @@ module Codec =
     Field.create Decode.timeOnlyIso Encode.timeOnlyIso
 #endif
 
+  /// `missing` decodes to None and None encodes to `missing`.
+  let optionWith (missing: string) (codec: FieldCodec<'a>) : FieldCodec<'a option> =
+    Field.create (Decode.optionWith missing codec.Decode) (Encode.optionWith missing codec.Encode)
+
+  /// `missing` decodes to ValueNone and ValueNone encodes to `missing`.
+  let voptionWith (missing: string) (codec: FieldCodec<'a>) : FieldCodec<'a voption> =
+    Field.create (Decode.voptionWith missing codec.Decode) (Encode.voptionWith missing codec.Encode)
+
   /// A blank field decodes to None; None encodes to an empty field.
-  let option (codec: FieldCodec<'a>) : FieldCodec<'a option> =
-    Field.create (Decode.option codec.Decode) (Encode.option codec.Encode)
+  let option (codec: FieldCodec<'a>) : FieldCodec<'a option> = optionWith "" codec
 
   /// A blank field decodes to ValueNone; ValueNone encodes to an empty field.
-  let voption (codec: FieldCodec<'a>) : FieldCodec<'a voption> =
-    Field.create (Decode.voption codec.Decode) (Encode.voption codec.Encode)
+  let voption (codec: FieldCodec<'a>) : FieldCodec<'a voption> = voptionWith "" codec
 
   /// ROUND-TRIPS ONLY IF NO TEXT IS ACCEPTED BY BOTH CODECS: WITH TWO string CODECS, Error "x" DECODES BACK AS Ok "x".
   let result (okCodec: FieldCodec<'a>) (errCodec: FieldCodec<'e>) : FieldCodec<Result<'a, 'e>> =
@@ -109,13 +115,24 @@ module Codec =
   let field (header: string) (codec: FieldCodec<'field>) (getter: 'record -> 'field) : PartialCodec<'record, 'field> =
     partial (Decode.field header codec.Decode) (Encode.field header codec.Encode getter)
 
+  /// Decodes None when the column is missing, the row is short, or the field matches `missing`; None encodes to `missing`.
+  let optionalFieldWith
+    (missing: string)
+    (header: string)
+    (codec: FieldCodec<'field>)
+    (getter: 'record -> 'field option)
+    : PartialCodec<'record, 'field option> =
+    partial
+      (Decode.optionalFieldWith missing header codec.Decode)
+      (Encode.field header (Encode.optionWith missing codec.Encode) getter)
+
   /// Decodes None when the column is missing, the row is short, or the field is blank; None encodes to an empty field.
   let optionalField
     (header: string)
     (codec: FieldCodec<'field>)
     (getter: 'record -> 'field option)
     : PartialCodec<'record, 'field option> =
-    partial (Decode.optionalField header codec.Decode) (Encode.field header (Encode.option codec.Encode) getter)
+    optionalFieldWith "" header codec getter
 
   /// The listed columns, each of which must exist when decoding. A key missing from the dictionary encodes to an empty field.
   let dictionary

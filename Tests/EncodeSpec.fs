@@ -27,6 +27,12 @@ let ``encodes records with a header row`` () =
   test <@ actual = [ [ "name"; "temp" ]; [ "a"; "1.5" ]; [ "b"; "" ] ] @>
 
 [<Test>]
+let ``optionWith writes the missing string for None`` () =
+  test <@ Encode.optionWith "NA" Encode.float None = "NA" @>
+  test <@ Encode.optionWith "NA" Encode.float (Some 1.5) = "1.5" @>
+  test <@ Encode.voptionWith "NA" Encode.float ValueNone = "NA" @>
+
+[<Test>]
 let ``dictionary writes empty for a missing key`` () =
   let d = Dictionary<string, string>(dict [ "a", "1" ])
 

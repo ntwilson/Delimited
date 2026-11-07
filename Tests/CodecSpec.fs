@@ -69,6 +69,13 @@ let ``option round-trips None through a blank field`` () =
   test <@ roundTrip (Codec.option Codec.int) (Some 3) = Ok(Some 3) @>
 
 [<Test>]
+let ``optionWith round-trips None through the missing string`` () =
+  test <@ (Codec.optionWith "NA" Codec.string).Encode None = "NA" @>
+  test <@ roundTrip (Codec.optionWith "NA" Codec.string) None = Ok None @>
+  test <@ roundTrip (Codec.optionWith "NA" Codec.string) (Some "") = Ok(Some "") @>
+  test <@ roundTrip (Codec.voptionWith "NA" Codec.int) ValueNone = Ok ValueNone @>
+
+[<Test>]
 let ``andThen validates in both directions`` () =
   let positive =
     Codec.int

@@ -44,17 +44,23 @@ module Encode =
   let timeOnlyIso: FieldEncoder<TimeOnly> = timeOnly Iso8601.timeOnlyFormat
 #endif
 
-  /// None encodes to an empty field.
-  let option (encoder: FieldEncoder<'a>) : FieldEncoder<'a option> =
+  /// None encodes to `missing`.
+  let optionWith (missing: string) (encoder: FieldEncoder<'a>) : FieldEncoder<'a option> =
     function
     | Some v -> encoder v
-    | None -> ""
+    | None -> missing
 
-  /// ValueNone encodes to an empty field.
-  let voption (encoder: FieldEncoder<'a>) : FieldEncoder<'a voption> =
+  /// ValueNone encodes to `missing`.
+  let voptionWith (missing: string) (encoder: FieldEncoder<'a>) : FieldEncoder<'a voption> =
     function
     | ValueSome v -> encoder v
-    | ValueNone -> ""
+    | ValueNone -> missing
+
+  /// None encodes to an empty field.
+  let option (encoder: FieldEncoder<'a>) : FieldEncoder<'a option> = optionWith "" encoder
+
+  /// ValueNone encodes to an empty field.
+  let voption (encoder: FieldEncoder<'a>) : FieldEncoder<'a voption> = voptionWith "" encoder
 
   let result (okEncoder: FieldEncoder<'a>) (errEncoder: FieldEncoder<'e>) : FieldEncoder<Result<'a, 'e>> =
     function

@@ -66,6 +66,13 @@ let positive = Decode.int |> Decode.Field.andThen (fun i -> if i > 0 then Ok i e
 let celsius = Encode.float |> Encode.Field.contramap (fun (Celsius c) -> c)
 ```
 
+`option` reads a blank field as `None` and writes `None` as an empty field. When a file marks missing values some other way, use `optionWith`, which treats only that text (ignoring surrounding whitespace) as missing; `voptionWith` and `optionalFieldWith` work the same way in `Decode`, `Encode` and `Codec`:
+
+```fsharp
+let temp = Decode.field "temp" (Decode.optionWith "NA" Decode.float)   // "NA" -> None
+let name = Codec.optionWith "NULL" Codec.string                        // "" -> Some ""
+```
+
 Combinators that exist for both fields and rows live in `Decode.Field`/`Decode.Row` and `Encode.Field`/`Encode.Row`.
 
 `Decode.Field.either` and `Decode.Row.either` try one decoder and fall back to a second. To try more than two, reduce a list with them:

@@ -190,21 +190,31 @@ module Decode =
       TimeOnly.TryParseExact(s, Iso8601.timeOnlyFormats, inv, DateTimeStyles.None))
 #endif
 
-  /// A blank field decodes to None.
-  let option (decoder: FieldDecoder<'a>) : FieldDecoder<'a option> =
+  // A NULL FIELD COUNTS AS BLANK, AND SURROUNDING WHITESPACE IS IGNORED ON BOTH SIDES.
+  let private isMissing (missing: string) (s: string) =
+    (if isNull s then "" else s.Trim()) = missing.Trim()
+
+  /// A field matching `missing` decodes to None.
+  let optionWith (missing: string) (decoder: FieldDecoder<'a>) : FieldDecoder<'a option> =
     fun s ->
-      if String.IsNullOrWhiteSpace s then
+      if isMissing missing s then
         Ok None
       else
         decoder s |> Result.map Some
 
-  /// A blank field decodes to ValueNone.
-  let voption (decoder: FieldDecoder<'a>) : FieldDecoder<'a voption> =
+  /// A field matching `missing` decodes to ValueNone.
+  let voptionWith (missing: string) (decoder: FieldDecoder<'a>) : FieldDecoder<'a voption> =
     fun s ->
-      if String.IsNullOrWhiteSpace s then
+      if isMissing missing s then
         Ok ValueNone
       else
         decoder s |> Result.map ValueSome
+
+  /// A blank field decodes to None.
+  let option (decoder: FieldDecoder<'a>) : FieldDecoder<'a option> = optionWith "" decoder
+
+  /// A blank field decodes to ValueNone.
+  let voption (decoder: FieldDecoder<'a>) : FieldDecoder<'a voption> = voptionWith "" decoder
 
   /// Prefers Ok when both accept the field; reports the Ok decoder's error when neither does.
   let result (okDecoder: FieldDecoder<'a>) (errDecoder: FieldDecoder<'e>) : FieldDecoder<Result<'a, 'e>> =
@@ -240,14 +250,18 @@ module Decode =
   let field (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
     singleField header decoder >> Result.mapError List.singleton
 
-  /// None when the column is missing, the row is short, or the field is blank. Fails if the table has no header row.
-  let optionalField (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
+  /// None when the column is missing, the row is short, or the field matches `missing`. Fails if the table has no header row.
+  let optionalFieldWith (missing: string) (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
     fun row ->
-      match singleField header (option decoder) row with
+      match singleField header (optionWith missing decoder) row with
       | Ok v -> Ok v
       | Error { Problem = MissingField _ }
       | Error { Problem = ColumnNotFound _ } -> Ok None
       | Error e -> Error [ e ]
+
+  /// None when the column is missing, the row is short, or the field is blank. Fails if the table has no header row.
+  let optionalField (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
+    optionalFieldWith "" header decoder
 
   /// The 0-based column, for files without headers.
   let index (i: int) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
