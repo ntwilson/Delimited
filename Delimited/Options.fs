@@ -1,5 +1,7 @@
 namespace Delimited
 
+open System
+
 open Sylvan.Data.Csv
 
 type TableOptions =
@@ -8,6 +10,8 @@ type TableOptions =
     Delimiter: char voption
     HasHeaders: bool
     Quote: char
+    /// How decoders match column names to headers.
+    HeaderComparer: StringComparer
     /// Runs last, so it can override anything above.
     ConfigureReader: CsvDataReaderOptions -> unit
     ConfigureWriter: CsvDataWriterOptions -> unit
@@ -19,6 +23,7 @@ module TableOptions =
       Delimiter = ValueSome ','
       HasHeaders = true
       Quote = '"'
+      HeaderComparer = StringComparer.Ordinal
       ConfigureReader = ignore
       ConfigureWriter = ignore
     }
@@ -34,10 +39,18 @@ module TableOptions =
 
   let withoutHeaders (options: TableOptions) = { options with HasHeaders = false }
 
+  let withCaseInsensitiveHeaders (options: TableOptions) =
+    { options with HeaderComparer = StringComparer.OrdinalIgnoreCase }
+
   let internal toReaderOptions (options: TableOptions) : CsvDataReaderOptions =
     // WE MANAGE THE TEXTREADER'S LIFETIME OURSELVES, SO A CALLER'S READER ISN'T CLOSED UNDER THEM.
     let o =
-      CsvDataReaderOptions(HasHeaders = options.HasHeaders, Quote = options.Quote, OwnsReader = false)
+      CsvDataReaderOptions(
+        HasHeaders = options.HasHeaders,
+        Quote = options.Quote,
+        HeaderComparer = options.HeaderComparer,
+        OwnsReader = false
+      )
 
     match options.Delimiter with
     | ValueSome d -> o.Delimiter <- d

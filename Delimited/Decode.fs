@@ -3,6 +3,7 @@ namespace Delimited
 open System
 open System.Collections.Generic
 open System.Globalization
+open System.Linq
 
 /// Header is None only when the file has no header row.
 type Column = { Index: int; Header: string option }
@@ -271,20 +272,19 @@ module Decode =
   let fields: RowDecoder<string[]> =
     fun row -> Ok(Array.init row.FieldCount row.GetString)
 
-  /// The listed columns, keyed by header; each must exist. A repeated header is read once.
+  /// The listed columns, keyed by header using `TableOptions.HeaderComparer`; each must exist. A repeated header is read once.
   let dictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
     fun row ->
       if row.Headers.IsNone then
         Error [ { Row = row.Number; Problem = NoHeaderRow } ]
       else
         let pairs, errors =
-          headers
-          |> List.distinct
+          Enumerable.Distinct(headers, row.HeaderComparer)
           |> Seq.map (fun h -> field h decoder row |> Result.map (fun v -> KeyValuePair(h, v)))
           |> Results.partition
 
         match errors with
-        | [] -> Ok(Dictionary(pairs, StringComparer.Ordinal))
+        | [] -> Ok(Dictionary(pairs, row.HeaderComparer))
         | errors -> Error errors
 
   /// Every column, keyed by header. A repeated header keeps its first value.

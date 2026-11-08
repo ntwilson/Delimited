@@ -127,11 +127,13 @@ Dynamic shapes are ordinary decoders and encoders, so they work with every sourc
 
 ## Options
 
-`TableOptions.csv`, `TableOptions.tsv`, `TableOptions.psv`, and `TableOptions.autoDetect` (detects the delimiter when reading) are the presets. Use `withDelimiter` and `withoutHeaders` to adjust them, or manually adjust the options such as
+`TableOptions.csv`, `TableOptions.tsv`, `TableOptions.psv`, and `TableOptions.autoDetect` (detects the delimiter when reading) are the presets. Use `withDelimiter`, `withoutHeaders`, and `withCaseInsensitiveHeaders` to adjust them, or manually adjust the options such as
 
 ```fsharp
 { TableOptions.csv with HasHeaders = false; Delimiter = ValueSome ';' }
 ```
+
+Decoders match column names to headers exactly by default. `withCaseInsensitiveHeaders` lets `Decode.field "name"` find a `Name` column. For any other matching rule, set `HeaderComparer` to any `StringComparer`. The same comparer keys the dictionaries from `Decode.dictionary`/`dictionaryOf`.
 
 You can use the `ConfigureReader`/`ConfigureWriter` fields in `TableOptions` to reach any other Sylvan setting.
 

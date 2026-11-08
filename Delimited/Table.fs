@@ -81,10 +81,11 @@ module Table =
     else
       None
 
-  let private rowOf (number: int64) headers ordinals (csv: CsvDataReader) : Row =
+  let private rowOf (options: TableOptions) (number: int64) headers ordinals (csv: CsvDataReader) : Row =
     {
       Number = number
       Headers = headers
+      HeaderComparer = options.HeaderComparer
       Ordinals = ordinals
       FieldCount = csv.RowFieldCount
       GetString = csv.GetString
@@ -123,7 +124,7 @@ module Table =
 
       use _ = csv
       let headers = headersOf options csv
-      let ordinals = Row.ordinalsOf headers
+      let ordinals = Row.ordinalsOf options.HeaderComparer headers
       let mutable number = 0L
       let mutable more = true
 
@@ -132,7 +133,7 @@ module Table =
 
         if hasRow then
           number <- number + 1L
-          yield decodeRow decoder (rowOf number headers ordinals csv)
+          yield decodeRow decoder (rowOf options number headers ordinals csv)
         else
           more <- false
     }
@@ -148,12 +149,12 @@ module Table =
       use _ = owner
       use csv = CsvDataReader.Create(textReader, TableOptions.toReaderOptions options)
       let headers = headersOf options csv
-      let ordinals = Row.ordinalsOf headers
+      let ordinals = Row.ordinalsOf options.HeaderComparer headers
 
       yield!
         Seq.unfold (fun i -> Some(i, i + 1L)) 1L
         |> Seq.takeWhile (fun _ -> csv.Read())
-        |> Seq.map (fun number -> decodeRow decoder (rowOf number headers ordinals csv))
+        |> Seq.map (fun number -> decodeRow decoder (rowOf options number headers ordinals csv))
     }
 
   /// Like `read`, but throws a DecodeException at the first row that fails.
@@ -259,12 +260,14 @@ module Table =
           else
             None
 
-        let ordinals = Row.ordinalsOf headers
+        let ordinals = Row.ordinalsOf options.HeaderComparer headers
 
         yield!
           remaining e
           |> Seq.mapi (fun i values ->
-            decodeRow decoder (Row.ofArray (int64 (i + 1)) headers ordinals (Seq.toArray values)))
+            decodeRow
+              decoder
+              (Row.ofArray (int64 (i + 1)) headers options.HeaderComparer ordinals (Seq.toArray values)))
     }
 
   /// Encodes to rows of fields, with a header row first when `options.HasHeaders`.
