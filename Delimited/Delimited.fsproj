@@ -37,6 +37,7 @@
     <Compile Include="Codec.fs" />
     <Compile Include="Options.fs" />
     <Compile Include="Table.fs" />
+    <Compile Include="Csv.fs" />
   </ItemGroup>
 
   <ItemGroup>

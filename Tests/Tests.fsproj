@@ -17,6 +17,7 @@
     <Compile Include="EncodeSpec.fs" />
     <Compile Include="CodecSpec.fs" />
     <Compile Include="TableSpec.fs" />
+    <Compile Include="CsvSpec.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
