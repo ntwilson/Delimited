@@ -584,3 +584,66 @@ let ``timeOnlyIso rejects 24:00, offsets, mixed formats, and other formats`` () 
 [<Test>]
 let ``choiceOf2 prefers the left decoder when both accept the field`` () =
   test <@ Decode.choiceOf2 Decode.int Decode.string "5" = Ok(Choice1Of2 5) @>
+
+let caseInsensitive = TableOptions.withCaseInsensitiveHeaders TableOptions.defaults
+
+[<Test>]
+let ``header case matters by default`` () =
+  let actual =
+    Table.decodeRows (Decode.field "name" Decode.string) (rows [ [ "Name" ]; [ "a" ] ])
+
+  let expected: Result<string, DecodeError list> list =
+    [ Error [ { Row = 1; Problem = ColumnNotFound "name" } ] ]
+
+  test <@ List.ofSeq actual = expected @>
+
+[<Test>]
+let ``withCaseInsensitiveHeaders matches fields regardless of case`` () =
+  let actual =
+    Table.decodeRowsWithOptions caseInsensitive reading (rows [ [ "NAME"; "Temp"; "count" ]; [ "a"; "1.5"; "2" ] ])
+
+  test <@ List.ofSeq actual = [ Ok { Name = "a"; Temp = 1.5; Count = 2 } ] @>
+
+[<Test>]
+let ``withCaseInsensitiveHeaders applies to optional fields`` () =
+  let actual =
+    Table.decodeRowsWithOptions
+      caseInsensitive
+      (Decode.optionalField "b" Decode.int)
+      (rows [ [ "a"; "B" ]; [ "1"; "2" ] ])
+
+  test <@ List.ofSeq actual = [ Ok(Some 2) ] @>
+
+[<Test>]
+let ``withCaseInsensitiveHeaders applies when reading text`` () =
+  let actual =
+    Table.readWithOptions caseInsensitive (Decode.field "name" Decode.string) (Source.Text "Name\na\n")
+    |> List.ofSeq
+
+  test <@ actual = [ Ok "a" ] @>
+
+[<Test>]
+let ``headers differing only in case keep the first column when matching case-insensitively`` () =
+  let actual =
+    Table.decodeRowsWithOptions caseInsensitive (Decode.field "id" Decode.int) (rows [ [ "Id"; "ID" ]; [ "1"; "2" ] ])
+
+  test <@ List.ofSeq actual = [ Ok 1 ] @>
+
+[<Test>]
+let ``case-insensitive dictionaries read each column once and look up keys in any case`` () =
+  let lookups (d: System.Collections.Generic.Dictionary<string, int>) = d.Count, d["A"], d["b"]
+
+  let listed =
+    Table.decodeRowsWithOptions
+      caseInsensitive
+      (Decode.dictionaryOf [ "a"; "A"; "B" ] Decode.int |> Decode.Row.map lookups)
+      (rows [ [ "a"; "B" ]; [ "1"; "2" ] ])
+
+  let every =
+    Table.decodeRowsWithOptions
+      caseInsensitive
+      (Decode.dictionary Decode.int |> Decode.Row.map lookups)
+      (rows [ [ "a"; "A"; "B" ]; [ "1"; "9"; "2" ] ])
+
+  test <@ List.ofSeq listed = [ Ok(2, 1, 2) ] @>
+  test <@ List.ofSeq every = [ Ok(2, 1, 2) ] @>
