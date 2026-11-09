@@ -75,10 +75,8 @@ let tricky =
     { Id = 5; Text = "" }
   ]
 
-let readOrFailList options source =
-  (Table.readOrFailAsyncWithOptions options noteCodec.Decode source
-   |> TaskSeq.toListAsync)
-    .Result
+let readOrFailList source =
+  (Table.readOrFailAsync noteCodec.Decode source |> TaskSeq.toListAsync).Result
 
 [<Test>]
 let ``writeAsync streams a taskSeq to a file`` () =
@@ -87,7 +85,7 @@ let ``writeAsync streams a taskSeq to a file`` () =
   try
     let source = taskSeq { for n in tricky -> n }
     (Table.writeAsync noteCodec.Encode (Sink.File path) source CancellationToken.None).Wait()
-    test <@ readOrFailList TableOptions.defaults (Source.File path) = tricky @>
+    test <@ readOrFailList (Source.File path) = tricky @>
   finally
     File.Delete path
 

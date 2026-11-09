@@ -127,10 +127,10 @@ Dynamic shapes are ordinary decoders and encoders, so they work with every sourc
 
 ## Options
 
-Every `Table` function uses `TableOptions.defaults`: comma-delimited, with headers and `"` quotes. For other options, call the `WithOptions` version, such as `Table.readAsyncWithOptions options reading source`. Build those options from the defaults with `withDelimiter`, `withDetectedDelimiter` (detects the delimiter when reading, writes commas) and `withoutHeaders`, or with a record update such as
+Every `Table` function uses `TableOptions.defaults`: comma-delimited, with headers and `"` quotes. For other options, call the `WithOptions` version, such as `Table.readAsyncWithOptions options reading source`. Build those options from the defaults with `withDelimiter`, `withAutoDetectDelimiter` (detects the delimiter when reading, writes commas) and `withoutHeaders`, or with a record update such as
 
 ```fsharp
-{ TableOptions.defaults with HasHeaders = false; Delimiter = ValueSome ';' }
+{ TableOptions.defaults with HasHeaders = false; Delimiter = Specific ';' }
 ```
 
 You can use the `ConfigureReader`/`ConfigureWriter` fields in `TableOptions` to reach any other Sylvan setting.

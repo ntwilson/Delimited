@@ -2,10 +2,14 @@ namespace Delimited
 
 open Sylvan.Data.Csv
 
+type Delimiter =
+  | AutoDetect
+  | Specific of char
+
 type TableOptions =
   {
-    /// ValueNone auto-detects when reading and writes commas.
-    Delimiter: char voption
+    /// AutoDetect writes commas
+    Delimiter: Delimiter
     HasHeaders: bool
     Quote: char
     /// Runs last, so it can override anything above.
@@ -16,7 +20,7 @@ type TableOptions =
 module TableOptions =
   let defaults =
     {
-      Delimiter = ValueSome ','
+      Delimiter = Delimiter.Specific ','
       HasHeaders = true
       Quote = '"'
       ConfigureReader = ignore
@@ -24,9 +28,9 @@ module TableOptions =
     }
 
   let withDelimiter (delimiter: char) (options: TableOptions) =
-    { options with Delimiter = ValueSome delimiter }
+    { options with Delimiter = Delimiter.Specific delimiter }
 
-  let withDetectedDelimiter (options: TableOptions) = { options with Delimiter = ValueNone }
+  let withAutoDetectDelimiter (options: TableOptions) = { options with Delimiter = AutoDetect }
 
   let withoutHeaders (options: TableOptions) = { options with HasHeaders = false }
 
@@ -36,8 +40,8 @@ module TableOptions =
       CsvDataReaderOptions(HasHeaders = options.HasHeaders, Quote = options.Quote, OwnsReader = false)
 
     match options.Delimiter with
-    | ValueSome d -> o.Delimiter <- d
-    | ValueNone -> ()
+    | Delimiter.Specific d -> o.Delimiter <- d
+    | AutoDetect -> ()
 
     options.ConfigureReader o
     o
@@ -47,7 +51,10 @@ module TableOptions =
       CsvDataWriterOptions(
         WriteHeaders = options.HasHeaders,
         Quote = options.Quote,
-        Delimiter = ValueOption.defaultValue ',' options.Delimiter
+        Delimiter =
+          match options.Delimiter with
+          | Specific c -> c
+          | AutoDetect -> ','
       )
 
     options.ConfigureWriter o

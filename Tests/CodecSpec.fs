@@ -107,15 +107,12 @@ let ``choiceOf2 decodes an ambiguous Choice2Of2 back as Choice1Of2`` () =
 
 [<Test>]
 let ``a codec drives both a column encoder and decoder`` () =
-  let options = TableOptions.defaults
   let codec = Codec.choiceOf2 Codec.int Codec.string
   let values = [ Choice1Of2 1; Choice2Of2 "n/a" ]
 
-  let text =
-    Table.writeStringWithOptions options (Encode.field "v" codec.Encode id) values
+  let text = Table.writeString (Encode.field "v" codec.Encode id) values
 
-  let actual =
-    Table.readWithOptions options (Decode.field "v" codec.Decode) (Source.Text text)
+  let actual = Table.read (Decode.field "v" codec.Decode) (Source.Text text)
 
   test <@ List.ofSeq actual = [ Ok(Choice1Of2 1); Ok(Choice2Of2 "n/a") ] @>
 

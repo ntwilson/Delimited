@@ -41,7 +41,10 @@ let tricky =
     { Id = 5; Text = "" }
   ]
 
-let readOrFailList options source =
+let readOrFailList source =
+  (Table.readOrFailAsync noteCodec.Decode source |> TaskSeq.toListAsync).Result
+
+let readOrFailListWithOptions options source =
   (Table.readOrFailAsyncWithOptions options noteCodec.Decode source
    |> TaskSeq.toListAsync)
     .Result
@@ -49,7 +52,7 @@ let readOrFailList options source =
 [<Test>]
 let ``writeString then read round-trips quoting`` () =
   let text = Table.writeString noteCodec.Encode tricky
-  test <@ readOrFailList TableOptions.defaults (Source.Text text) = tricky @>
+  test <@ readOrFailList (Source.Text text) = tricky @>
 
 [<TestCase('|')>]
 [<TestCase('\t')>]
@@ -58,13 +61,16 @@ let ``custom delimiter round-trips`` (delimiter: char) =
   let options = TableOptions.withDelimiter delimiter TableOptions.defaults
   let text = Table.writeStringWithOptions options noteCodec.Encode tricky
   test <@ text.StartsWith $"id%c{delimiter}text" @>
-  test <@ readOrFailList options (Source.Text text) = tricky @>
+  test <@ readOrFailListWithOptions options (Source.Text text) = tricky @>
 
 [<Test>]
 let ``auto-detects the delimiter when reading`` () =
   test
     <@
-      readOrFailList (TableOptions.withDetectedDelimiter TableOptions.defaults) (Source.Text "id|text\n1|a\n2|b\n") =
+      readOrFailListWithOptions
+        (TableOptions.withAutoDetectDelimiter TableOptions.defaults)
+        (Source.Text "id|text\n1|a\n2|b\n")
+        =
         [ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ]
     @>
 
@@ -98,8 +104,7 @@ let ``read returns decode errors per row`` () =
 [<Test>]
 let ``readOrFailAsync throws on a bad row`` () =
   let ex =
-    Assert.Throws<System.AggregateException>(fun () ->
-      readOrFailList TableOptions.defaults (Source.Text "id,text\nx,a\n") |> ignore)
+    Assert.Throws<System.AggregateException>(fun () -> readOrFailList (Source.Text "id,text\nx,a\n") |> ignore)
 
   test <@ (ex.InnerException :? DecodeException) @>
 
@@ -180,7 +185,7 @@ let ``writeAsync streams a taskSeq to a file`` () =
   try
     let source = taskSeq { for n in tricky -> n }
     (Table.writeAsync noteCodec.Encode (Sink.File path) source CancellationToken.None).Wait()
-    test <@ readOrFailList TableOptions.defaults (Source.File path) = tricky @>
+    test <@ readOrFailList (Source.File path) = tricky @>
   finally
     File.Delete path
 
@@ -193,7 +198,7 @@ let ``writing to a caller's stream leaves it open`` () =
 
   test <@ stream.CanWrite @>
   stream.Position <- 0L
-  test <@ readOrFailList TableOptions.defaults (Source.Stream stream) = [ { Id = 1; Text = "a" } ] @>
+  test <@ readOrFailList (Source.Stream stream) = [ { Id = 1; Text = "a" } ] @>
 
 [<Test>]
 let ``reads a caller's reader and leaves it open`` () =
@@ -240,7 +245,7 @@ let ``writeDataReader round-trips a DbDataReader`` () =
 
   Table.writeDataReader (Sink.Writer w) (table.CreateDataReader()) |> ignore
 
-  test <@ readOrFailList TableOptions.defaults (Source.Text(string w)) = tricky @>
+  test <@ readOrFailList (Source.Text(string w)) = tricky @>
 
 [<Test>]
 let ``writeDataReaderAsync round-trips a DbDataReader`` () =
@@ -249,7 +254,7 @@ let ``writeDataReaderAsync round-trips a DbDataReader`` () =
 
   (Table.writeDataReaderAsync (Sink.Writer w) (table.CreateDataReader()) CancellationToken.None).Wait()
 
-  test <@ readOrFailList TableOptions.defaults (Source.Text(string w)) = tricky @>
+  test <@ readOrFailList (Source.Text(string w)) = tricky @>
 
 [<Test>]
 let ``withReaderAsync exposes Sylvan`` () =

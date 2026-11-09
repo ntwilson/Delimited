@@ -16,15 +16,13 @@ let reading: RowEncoder<Reading> =
       Encode.field "temp" (Encode.option Encode.float) _.Temp
     ]
 
-let encode options encoder xs =
-  Table.encodeRowsWithOptions options encoder xs
-  |> Seq.map List.ofSeq
-  |> List.ofSeq
+let encode encoder xs =
+  Table.encodeRows encoder xs |> Seq.map List.ofSeq |> List.ofSeq
 
 [<Test>]
 let ``encodes records with a header row`` () =
   let actual =
-    encode TableOptions.defaults reading [ { Name = "a"; Temp = Some 1.5 }; { Name = "b"; Temp = None } ]
+    encode reading [ { Name = "a"; Temp = Some 1.5 }; { Name = "b"; Temp = None } ]
 
   test <@ actual = [ [ "name"; "temp" ]; [ "a"; "1.5" ]; [ "b"; "" ] ] @>
 
@@ -38,8 +36,7 @@ let ``optionWith writes the missing string for None`` () =
 let ``dictionary writes empty for a missing key`` () =
   let d = Dictionary<string, string>(dict [ "a", "1" ])
 
-  let actual =
-    encode TableOptions.defaults (Encode.dictionary [ "a"; "b" ] Encode.string) [ d ]
+  let actual = encode (Encode.dictionary [ "a"; "b" ] Encode.string) [ d ]
 
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
@@ -52,11 +49,11 @@ let ``a row decoded as a dictionary encodes back to the same row`` () =
     |> Seq.choose Result.toOption
     |> List.ofSeq
 
-  test <@ encode TableOptions.defaults (Encode.dictionary [ "a"; "b" ] Encode.string) decoded = lines @>
+  test <@ encode (Encode.dictionary [ "a"; "b" ] Encode.string) decoded = lines @>
 
 [<Test>]
 let ``fields pads short rows`` () =
-  let actual = encode TableOptions.defaults (Encode.fields [ "a"; "b" ]) [ [| "1" |] ]
+  let actual = encode (Encode.fields [ "a"; "b" ]) [ [| "1" |] ]
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
 [<Test>]
