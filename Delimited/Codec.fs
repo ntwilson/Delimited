@@ -3,16 +3,16 @@ namespace Delimited
 open System.Collections.Generic
 
 /// Decodes a row to 'a and encodes columns from a 'record. Combine with `codec { }` until 'a is 'record.
-type PartialCodec<'record, 'a> = { Decode: RowDecoder<'a>; Encode: RowEncoder<'record> }
+type PartialCodec<'record, 'a> = { Decode: RowDecoder<Headed, 'a>; Encode: RowEncoder<'record> }
 
 /// Reads and writes whole rows as 'record.
-type RowCodec<'record> = { Decode: RowDecoder<'record>; Encode: RowEncoder<'record> }
+type RowCodec<'record> = { Decode: RowDecoder<Headed, 'record>; Encode: RowEncoder<'record> }
 
 /// Converts a single field between its text form and 'a.
 type FieldCodec<'a> = { Decode: FieldDecoder<'a>; Encode: FieldEncoder<'a> }
 
 module Codec =
-  let private partial (decode: RowDecoder<'a>) (encode: RowEncoder<'record>) : PartialCodec<'record, 'a> =
+  let private partial (decode: RowDecoder<Headed, 'a>) (encode: RowEncoder<'record>) : PartialCodec<'record, 'a> =
     { Decode = decode; Encode = encode }
 
   module Field =
@@ -28,7 +28,7 @@ module Codec =
       create (Decode.Field.andThen decode codec.Decode) (Encode.Field.contramap encode codec.Encode)
 
   module Row =
-    let create (decode: RowDecoder<'record>) (encode: RowEncoder<'record>) : RowCodec<'record> =
+    let create (decode: RowDecoder<Headed, 'record>) (encode: RowEncoder<'record>) : RowCodec<'record> =
       { Decode = decode; Encode = encode }
 
     /// Converts both directions; `decode` and `encode` should be inverses.

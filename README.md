@@ -127,15 +127,23 @@ Dynamic shapes are ordinary decoders and encoders, so they work with every sourc
 
 ## Options
 
-Every `Table` function uses `TableOptions.defaults`: comma-delimited, with headers and `"` quotes. For other options, call the `WithOptions` version, such as `Table.readAsyncWithOptions options reading source`. Build those options from the defaults with `withDelimiter`, `withAutoDetectDelimiter` (detects the delimiter when reading, writes commas), `withoutHeaders` and `withCaseInsensitiveHeaders`, or with a record update such as
+Every `Table` function uses `TableOptions.defaults`: comma-delimited, with headers and `"` quotes. For other options, call the `WithOptions` version, such as `Table.readAsyncWithOptions options reading source`. Build those options from the defaults with `withDelimiter`, `withAutoDetectDelimiter` (detects the delimiter when reading, writes commas), `withQuote`, `withoutHeaders` and `withCaseInsensitiveHeaders`:
 
 ```fsharp
-{ TableOptions.defaults with HasHeaders = false; Delimiter = Specific ';' }
+TableOptions.defaults |> TableOptions.withDelimiter ';' |> TableOptions.withoutHeaders
 ```
 
-Decoders match column names to headers exactly by default. `withCaseInsensitiveHeaders` lets `Decode.field "name"` find a `Name` column. For any other matching rule, set `HeaderComparer` to any `StringComparer`. The same comparer keys the dictionaries from `Decode.dictionary`/`dictionaryOf`.
+Decoders match column names to headers exactly by default. `withCaseInsensitiveHeaders` lets `Decode.field "name"` find a `Name` column. For any other matching rule, pass any `StringComparer` to `withHeaderComparer`. The same comparer keys the dictionaries from `Decode.dictionary`/`dictionaryOf`.
 
-You can use the `ConfigureReader`/`ConfigureWriter` fields in `TableOptions` to reach any other Sylvan setting.
+You can use `withReaderConfig`/`withWriterConfig` to reach any other Sylvan setting.
+
+### Tables without headers
+
+A `RowDecoder<'shape, 'a>` and a `TableOptions<'shape>` record whether a header row is needed. `Decode.field`, `optionalField`, `dictionary` and `dictionaryOf` give `RowDecoder<Headed, _>`, and `TableOptions.defaults` is `TableOptions<Headed>`. `withoutHeaders` gives `TableOptions<Positional>`, so passing it a decoder that looks up columns by name is a compile error rather than a failure on every row.
+
+`Decode.index` and `Decode.fields` work with either, and combining them with `Decode.field` gives a `Headed` decoder. A top-level decoder built only from them stays generic, so if F# reports a value restriction error, annotate its shape, such as `RowDecoder<Positional, Reading>`.
+
+Codecs always write headers, so a `RowCodec`'s decoder is always `Headed`.
 
 ## Development
 

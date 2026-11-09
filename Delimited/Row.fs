@@ -10,8 +10,8 @@ type Row =
     {
       /// 1-based data row number, not counting the header.
       Number: int64
-      /// None when the table has no header row.
-      Headers: string[] option
+      /// Empty when the table has no header row.
+      Headers: string[]
       HeaderComparer: StringComparer
       Ordinals: IReadOnlyDictionary<string, int>
       FieldCount: int
@@ -29,11 +29,10 @@ module internal Row =
     |> Seq.map (fun g -> g.Key, g :> 'a seq)
 
   /// When headers repeat (as judged by `comparer`), the first one wins.
-  let ordinalsOf (comparer: StringComparer) (headers: string[] option) : IReadOnlyDictionary<string, int> =
+  let ordinalsOf (comparer: StringComparer) (headers: string[]) : IReadOnlyDictionary<string, int> =
     // DEDUPE WITH THE COMPARER, NOT distinctBy: "Id" AND "ID" WOULD BOTH SURVIVE AND THE DICTIONARY WOULD THROW.
     // GROUPS ARE NEVER EMPTY, SO Seq.head IS THE FIRST OCCURRENCE.
     headers
-    |> Option.defaultValue [||]
     |> Seq.indexed
     |> groupBy comparer snd
     |> Seq.map (fun (header, group) -> KeyValuePair(header, fst (Seq.head group)))
@@ -52,7 +51,7 @@ module internal Row =
 
   let ofArray
     (number: int64)
-    (headers: string[] option)
+    (headers: string[])
     (comparer: StringComparer)
     (ordinals: IReadOnlyDictionary<string, int>)
     (values: string[])
