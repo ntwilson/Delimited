@@ -42,19 +42,21 @@ let tricky =
   ]
 
 let readOrFailList options source =
-  (Table.readOrFailAsync options noteCodec.Decode source |> TaskSeq.toListAsync).Result
+  (Table.readOrFailAsyncWithOptions options noteCodec.Decode source
+   |> TaskSeq.toListAsync)
+    .Result
 
 [<Test>]
 let ``writeString then read round-trips quoting`` () =
-  let text = Table.writeString TableOptions.csv noteCodec.Encode tricky
-  test <@ readOrFailList TableOptions.csv (Source.Text text) = tricky @>
+  let text = Table.writeString noteCodec.Encode tricky
+  test <@ readOrFailList TableOptions.defaults (Source.Text text) = tricky @>
 
 [<TestCase('|')>]
 [<TestCase('\t')>]
 [<TestCase(';')>]
 let ``custom delimiter round-trips`` (delimiter: char) =
-  let options = TableOptions.withDelimiter delimiter TableOptions.csv
-  let text = Table.writeString options noteCodec.Encode tricky
+  let options = TableOptions.withDelimiter delimiter TableOptions.defaults
+  let text = Table.writeStringWithOptions options noteCodec.Encode tricky
   test <@ text.StartsWith $"id%c{delimiter}text" @>
   test <@ readOrFailList options (Source.Text text) = tricky @>
 
@@ -62,7 +64,7 @@ let ``custom delimiter round-trips`` (delimiter: char) =
 let ``auto-detects the delimiter when reading`` () =
   test
     <@
-      readOrFailList TableOptions.autoDetect (Source.Text "id|text\n1|a\n2|b\n") =
+      readOrFailList (TableOptions.withDetectedDelimiter TableOptions.defaults) (Source.Text "id|text\n1|a\n2|b\n") =
         [ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ]
     @>
 
@@ -71,8 +73,7 @@ let ``reads a caller's stream as IAsyncEnumerable and leaves it open`` () =
   use stream = new MemoryStream(Encoding.UTF8.GetBytes "id,text\n1,a\n2,b\n")
 
   let e =
-    (Table.readOrFailAsync TableOptions.csv noteCodec.Decode (Source.Stream stream))
-      .GetAsyncEnumerator(CancellationToken.None)
+    (Table.readOrFailAsync noteCodec.Decode (Source.Stream stream)).GetAsyncEnumerator(CancellationToken.None)
 
   let rec drain acc =
     if e.MoveNextAsync().AsTask().Result then
@@ -88,8 +89,7 @@ let ``reads a caller's stream as IAsyncEnumerable and leaves it open`` () =
 [<Test>]
 let ``read returns decode errors per row`` () =
   let actual =
-    Table.read TableOptions.csv noteCodec.Decode (Source.Text "id,text\n1,a\nx,b\n")
-    |> List.ofSeq
+    Table.read noteCodec.Decode (Source.Text "id,text\n1,a\nx,b\n") |> List.ofSeq
 
   test <@ actual.Length = 2 @>
   test <@ actual[0] = Ok { Id = 1; Text = "a" } @>
@@ -99,7 +99,7 @@ let ``read returns decode errors per row`` () =
 let ``readOrFailAsync throws on a bad row`` () =
   let ex =
     Assert.Throws<System.AggregateException>(fun () ->
-      readOrFailList TableOptions.csv (Source.Text "id,text\nx,a\n") |> ignore)
+      readOrFailList TableOptions.defaults (Source.Text "id,text\nx,a\n") |> ignore)
 
   test <@ (ex.InnerException :? DecodeException) @>
 
@@ -109,13 +109,13 @@ let mixedRows = Source.Text "id,text\n1,a\nx,b\n3,c\ny,d\n"
 let ``readAll returns every row when all decode`` () =
   test
     <@
-      Table.readAll TableOptions.csv noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n") =
+      Table.readAll noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n") =
         ([ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ], [])
     @>
 
 [<Test>]
 let ``readAll returns the passing rows and the errors from every failing row in order`` () =
-  let values, errors = Table.readAll TableOptions.csv noteCodec.Decode mixedRows
+  let values, errors = Table.readAll noteCodec.Decode mixedRows
   test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
   test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
@@ -124,27 +124,26 @@ let silentFailure: RowDecoder<Note> = fun _ -> Error []
 [<Test>]
 let ``decodeRows reports a row whose decoder fails with no errors`` () =
   let rowsOf options rows =
-    Table.decodeRows options silentFailure rows
+    Table.decodeRowsWithOptions options silentFailure rows
     |> Seq.map (Result.mapError (List.map _.Row))
     |> List.ofSeq
 
   let fields = [ [ "1"; "a" ]; [ "2"; "b" ] ] |> List.map Seq.ofList
   let withHeaders = Seq.ofList (Seq.ofList [ "id"; "text" ] :: fields)
-  let noHeaders = { TableOptions.csv with HasHeaders = false }
+  let noHeaders = { TableOptions.defaults with HasHeaders = false }
 
-  test <@ rowsOf TableOptions.csv withHeaders = [ Error [ 1L ]; Error [ 2L ] ] @>
+  test <@ rowsOf TableOptions.defaults withHeaders = [ Error [ 1L ]; Error [ 2L ] ] @>
   test <@ rowsOf noHeaders (Seq.ofList fields) = [ Error [ 1L ]; Error [ 2L ] ] @>
 
 [<Test>]
 let ``readAll reports a row whose decoder fails with no errors`` () =
-  let values, errors = Table.readAll TableOptions.csv silentFailure mixedRows
+  let values, errors = Table.readAll silentFailure mixedRows
   test <@ values = [] @>
   test <@ errors |> List.map _.Row = [ 1L; 2L; 3L; 4L ] @>
 
 [<Test>]
 let ``readAllAsync reports a row whose decoder fails with no errors`` () =
-  let values, errors =
-    (Table.readAllAsync TableOptions.csv silentFailure mixedRows).Result
+  let values, errors = (Table.readAllAsync silentFailure mixedRows).Result
 
   test <@ values = [] @>
   test <@ errors |> List.map _.Row = [ 1L; 2L; 3L; 4L ] @>
@@ -152,26 +151,24 @@ let ``readAllAsync reports a row whose decoder fails with no errors`` () =
 [<Test>]
 let ``readOrFail gives a message when the decoder fails with no errors`` () =
   let ex =
-    Assert.Throws<DecodeException>(fun () ->
-      Table.readOrFail TableOptions.csv silentFailure mixedRows |> Seq.iter ignore)
+    Assert.Throws<DecodeException>(fun () -> Table.readOrFail silentFailure mixedRows |> Seq.iter ignore)
 
   test <@ ex.Message <> "" @>
 
 [<Test>]
 let ``readAll of an empty table is empty`` () =
-  test <@ Table.readAll TableOptions.csv noteCodec.Decode (Source.Text "id,text\n") = ([], []) @>
+  test <@ Table.readAll noteCodec.Decode (Source.Text "id,text\n") = ([], []) @>
 
 [<Test>]
 let ``readAllAsync returns every row when all decode`` () =
   let actual =
-    (Table.readAllAsync TableOptions.csv noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n")).Result
+    (Table.readAllAsync noteCodec.Decode (Source.Text "id,text\n1,a\n2,b\n")).Result
 
   test <@ actual = ([ { Id = 1; Text = "a" }; { Id = 2; Text = "b" } ], []) @>
 
 [<Test>]
 let ``readAllAsync returns the passing rows and the errors from every failing row in order`` () =
-  let values, errors =
-    (Table.readAllAsync TableOptions.csv noteCodec.Decode mixedRows).Result
+  let values, errors = (Table.readAllAsync noteCodec.Decode mixedRows).Result
 
   test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
   test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
@@ -182,8 +179,8 @@ let ``writeAsync streams a taskSeq to a file`` () =
 
   try
     let source = taskSeq { for n in tricky -> n }
-    (Table.writeAsync TableOptions.csv noteCodec.Encode (Sink.File path) source CancellationToken.None).Wait()
-    test <@ readOrFailList TableOptions.csv (Source.File path) = tricky @>
+    (Table.writeAsync noteCodec.Encode (Sink.File path) source CancellationToken.None).Wait()
+    test <@ readOrFailList TableOptions.defaults (Source.File path) = tricky @>
   finally
     File.Delete path
 
@@ -191,20 +188,18 @@ let ``writeAsync streams a taskSeq to a file`` () =
 let ``writing to a caller's stream leaves it open`` () =
   use stream = new MemoryStream()
 
-  Table.write TableOptions.csv noteCodec.Encode (Sink.Stream stream) [ { Id = 1; Text = "a" } ]
+  Table.write noteCodec.Encode (Sink.Stream stream) [ { Id = 1; Text = "a" } ]
   |> ignore
 
   test <@ stream.CanWrite @>
   stream.Position <- 0L
-  test <@ readOrFailList TableOptions.csv (Source.Stream stream) = [ { Id = 1; Text = "a" } ] @>
+  test <@ readOrFailList TableOptions.defaults (Source.Stream stream) = [ { Id = 1; Text = "a" } ] @>
 
 [<Test>]
 let ``reads a caller's reader and leaves it open`` () =
   use reader = new StringReader("id,text\n1,a\n")
 
-  let actual =
-    Table.readOrFail TableOptions.csv noteCodec.Decode (Source.Reader reader)
-    |> List.ofSeq
+  let actual = Table.readOrFail noteCodec.Decode (Source.Reader reader) |> List.ofSeq
 
   test <@ actual = [ { Id = 1; Text = "a" } ] @>
   // A DISPOSED StringReader THROWS HERE INSTEAD OF RETURNING -1.
@@ -214,7 +209,7 @@ let ``reads a caller's reader and leaves it open`` () =
 let ``writing to a caller's writer leaves it open`` () =
   use w = new StringWriter()
 
-  Table.write TableOptions.csv noteCodec.Encode (Sink.Writer w) [ { Id = 1; Text = "a" } ]
+  Table.write noteCodec.Encode (Sink.Writer w) [ { Id = 1; Text = "a" } ]
   |> ignore
 
   w.Write "more"
@@ -224,13 +219,10 @@ let ``writing to a caller's writer leaves it open`` () =
 let ``dynamic rows round-trip through files`` () =
   let headers = [ "x"; "y" ]
 
-  let text =
-    Table.writeString TableOptions.csv (Encode.fields headers) [ [| "1"; "2" |]; [| "3" |] ]
+  let text = Table.writeString (Encode.fields headers) [ [| "1"; "2" |]; [| "3" |] ]
 
   let actual =
-    (Table.readAsync TableOptions.csv Decode.fields (Source.Text text)
-     |> TaskSeq.toListAsync)
-      .Result
+    (Table.readAsync Decode.fields (Source.Text text) |> TaskSeq.toListAsync).Result
 
   test <@ actual = [ Ok [| "1"; "2" |]; Ok [| "3"; "" |] ] @>
 
@@ -246,25 +238,23 @@ let ``writeDataReader round-trips a DbDataReader`` () =
   use table = noteTable ()
   use w = new StringWriter()
 
-  Table.writeDataReader TableOptions.csv (Sink.Writer w) (table.CreateDataReader())
-  |> ignore
+  Table.writeDataReader (Sink.Writer w) (table.CreateDataReader()) |> ignore
 
-  test <@ readOrFailList TableOptions.csv (Source.Text(string w)) = tricky @>
+  test <@ readOrFailList TableOptions.defaults (Source.Text(string w)) = tricky @>
 
 [<Test>]
 let ``writeDataReaderAsync round-trips a DbDataReader`` () =
   use table = noteTable ()
   use w = new StringWriter()
 
-  (Table.writeDataReaderAsync TableOptions.csv (Sink.Writer w) (table.CreateDataReader()) CancellationToken.None).Wait()
+  (Table.writeDataReaderAsync (Sink.Writer w) (table.CreateDataReader()) CancellationToken.None).Wait()
 
-  test <@ readOrFailList TableOptions.csv (Source.Text(string w)) = tricky @>
+  test <@ readOrFailList TableOptions.defaults (Source.Text(string w)) = tricky @>
 
 [<Test>]
 let ``withReaderAsync exposes Sylvan`` () =
   let count =
-    (Table.withReaderAsync TableOptions.csv (Source.Text "a,b,c\n1,2,3\n") (fun r ->
-      System.Threading.Tasks.Task.FromResult r.FieldCount))
+    (Table.withReaderAsync (Source.Text "a,b,c\n1,2,3\n") (fun r -> System.Threading.Tasks.Task.FromResult r.FieldCount))
       .Result
 
   test <@ count = 3 @>

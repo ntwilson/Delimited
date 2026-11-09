@@ -22,13 +22,13 @@ let reading =
 
 // TaskSeq<Result<Reading, DecodeError list>>, which is an IAsyncEnumerable.
 // `and!` reports every bad field in a row, not just the first.
-let rows = Table.readAsync TableOptions.csv reading (Source.File "readings.csv")
+let rows = Table.readAsync reading (Source.File "readings.csv")
 
 // Or throw a DecodeException on the first bad row:
-let! all = Table.readOrFailAsync TableOptions.tsv reading (Source.Stream stream) |> TaskSeq.toListAsync
+let! all = Table.readOrFailAsync reading (Source.Stream stream) |> TaskSeq.toListAsync
 
 // Or eagerly read and split on successfully parsed rows and failures
-let! (successes, failures) = Table.readAllAsync TableOptions.csv reading (Source.File "readings.csv")
+let! (successes, failures) = Table.readAllAsync reading (Source.File "readings.csv")
 ```
 
 Sources: `Source.File`, `Source.Stream`, `Source.Reader`, `Source.Text`. A stream or reader you pass in is left open.
@@ -48,10 +48,10 @@ let encoder : RowEncoder<Reading> =
       Encode.field "date" (Encode.dateOnly "yyyy-MM-dd") _.Date ]
 
 // Each write returns the number of rows written.
-let count = Table.write TableOptions.csv encoder (Sink.File "out.csv") readings     // seq
-let! count = Table.writeAsync TableOptions.csv encoder (Sink.Stream s) asyncReadings ct   // TaskSeq / IAsyncEnumerable
-let! count = Table.writeAsync TableOptions.tsv encoder (Sink.Stream s) (readings |> TaskSeq.ofSeq) ct
-let text = Table.writeString (TableOptions.withDelimiter '|' TableOptions.csv) encoder readings
+let count = Table.write encoder (Sink.File "out.csv") readings     // seq
+let! count = Table.writeAsync encoder (Sink.Stream s) asyncReadings ct   // TaskSeq / IAsyncEnumerable
+let! count = Table.writeAsyncWithOptions (TableOptions.withDelimiter '\t' TableOptions.defaults) encoder (Sink.Stream s) (readings |> TaskSeq.ofSeq) ct
+let text = Table.writeStringWithOptions (TableOptions.withDelimiter '|' TableOptions.defaults) encoder readings
 ```
 
 `Table.encodeRows` encodes to an in-memory `string seq seq`, with the header row first when the options have headers.
@@ -107,8 +107,8 @@ let reading : RowCodec<Reading> =
     return { Name = name; Temp = temp; Date = date }
   }
 
-let rows = Table.readAsync TableOptions.csv reading.Decode (Source.File "readings.csv")
-Table.write TableOptions.tsv reading.Encode (Sink.File "out.tsv") readings |> ignore
+let rows = Table.readAsync reading.Decode (Source.File "readings.csv")
+Table.write reading.Encode (Sink.File "out.csv") readings |> ignore
 ```
 
 `Codec.Row.map` converts a finished codec in both directions, like `Codec.Field.map`.
@@ -122,15 +122,15 @@ Dynamic shapes are ordinary decoders and encoders, so they work with every sourc
 - `Decode.dictionaryOf headers Decode.string` gives only the listed columns, each of which must exist
 - `Encode.fields headers` writes `string[]`; `Encode.dictionary headers Encode.string` writes `IDictionary<string, string>`
 - `Codec.dictionary headers Codec.float _.Readings` combines the two inside `codec { }`; use `Codec.option` when cells can be blank
-- `Table.withReaderAsync options source (fun csvDataReader -> task { ... })` gives you Sylvan's raw `CsvDataReader`
-- `Table.writeDataReader options sink dbDataReader` (and `writeDataReaderAsync`) writes any `DbDataReader`, such as query results, without an encoder
+- `Table.withReaderAsync source (fun csvDataReader -> task { ... })` gives you Sylvan's raw `CsvDataReader`
+- `Table.writeDataReader sink dbDataReader` (and `writeDataReaderAsync`) writes any `DbDataReader`, such as query results, without an encoder
 
 ## Options
 
-`TableOptions.csv`, `TableOptions.tsv`, `TableOptions.psv`, and `TableOptions.autoDetect` (detects the delimiter when reading) are the presets. Use `withDelimiter` and `withoutHeaders` to adjust them, or manually adjust the options such as
+Every `Table` function uses `TableOptions.defaults`: comma-delimited, with headers and `"` quotes. For other options, call the `WithOptions` version, such as `Table.readAsyncWithOptions options reading source`. Build those options from the defaults with `withDelimiter`, `withDetectedDelimiter` (detects the delimiter when reading, writes commas) and `withoutHeaders`, or with a record update such as
 
 ```fsharp
-{ TableOptions.csv with HasHeaders = false; Delimiter = ValueSome ';' }
+{ TableOptions.defaults with HasHeaders = false; Delimiter = ValueSome ';' }
 ```
 
 You can use the `ConfigureReader`/`ConfigureWriter` fields in `TableOptions` to reach any other Sylvan setting.

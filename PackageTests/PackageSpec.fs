@@ -47,11 +47,10 @@ let ``round-trips a file through the packed library and its dependencies`` () =
   try
     let readings = [ { Name = "a, b"; Temp = 1.5 }; { Name = "c"; Temp = -2.0 } ]
 
-    let written =
-      Table.write TableOptions.csv readingCodec.Encode (Sink.File path) readings
+    let written = Table.write readingCodec.Encode (Sink.File path) readings
 
     let successes, failures =
-      (Table.readAllAsync TableOptions.csv readingCodec.Decode (Source.File path)).Result
+      (Table.readAllAsync readingCodec.Decode (Source.File path)).Result
 
     test <@ written = 2L && successes = readings && failures = [] @>
   finally
@@ -77,7 +76,9 @@ let tricky =
   ]
 
 let readOrFailList options source =
-  (Table.readOrFailAsync options noteCodec.Decode source |> TaskSeq.toListAsync).Result
+  (Table.readOrFailAsyncWithOptions options noteCodec.Decode source
+   |> TaskSeq.toListAsync)
+    .Result
 
 [<Test>]
 let ``writeAsync streams a taskSeq to a file`` () =
@@ -85,8 +86,8 @@ let ``writeAsync streams a taskSeq to a file`` () =
 
   try
     let source = taskSeq { for n in tricky -> n }
-    (Table.writeAsync TableOptions.csv noteCodec.Encode (Sink.File path) source CancellationToken.None).Wait()
-    test <@ readOrFailList TableOptions.csv (Source.File path) = tricky @>
+    (Table.writeAsync noteCodec.Encode (Sink.File path) source CancellationToken.None).Wait()
+    test <@ readOrFailList TableOptions.defaults (Source.File path) = tricky @>
   finally
     File.Delete path
 

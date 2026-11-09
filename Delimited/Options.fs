@@ -14,7 +14,7 @@ type TableOptions =
   }
 
 module TableOptions =
-  let csv =
+  let defaults =
     {
       Delimiter = ValueSome ','
       HasHeaders = true
@@ -23,14 +23,10 @@ module TableOptions =
       ConfigureWriter = ignore
     }
 
-  let tsv = { csv with Delimiter = ValueSome '\t' }
-
-  let psv = { csv with Delimiter = ValueSome '|' }
-
-  let autoDetect = { csv with Delimiter = ValueNone }
-
   let withDelimiter (delimiter: char) (options: TableOptions) =
     { options with Delimiter = ValueSome delimiter }
+
+  let withDetectedDelimiter (options: TableOptions) = { options with Delimiter = ValueNone }
 
   let withoutHeaders (options: TableOptions) = { options with HasHeaders = false }
 

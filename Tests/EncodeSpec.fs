@@ -17,12 +17,14 @@ let reading: RowEncoder<Reading> =
     ]
 
 let encode options encoder xs =
-  Table.encodeRows options encoder xs |> Seq.map List.ofSeq |> List.ofSeq
+  Table.encodeRowsWithOptions options encoder xs
+  |> Seq.map List.ofSeq
+  |> List.ofSeq
 
 [<Test>]
 let ``encodes records with a header row`` () =
   let actual =
-    encode TableOptions.csv reading [ { Name = "a"; Temp = Some 1.5 }; { Name = "b"; Temp = None } ]
+    encode TableOptions.defaults reading [ { Name = "a"; Temp = Some 1.5 }; { Name = "b"; Temp = None } ]
 
   test <@ actual = [ [ "name"; "temp" ]; [ "a"; "1.5" ]; [ "b"; "" ] ] @>
 
@@ -37,7 +39,7 @@ let ``dictionary writes empty for a missing key`` () =
   let d = Dictionary<string, string>(dict [ "a", "1" ])
 
   let actual =
-    encode TableOptions.csv (Encode.dictionary [ "a"; "b" ] Encode.string) [ d ]
+    encode TableOptions.defaults (Encode.dictionary [ "a"; "b" ] Encode.string) [ d ]
 
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
@@ -46,15 +48,15 @@ let ``a row decoded as a dictionary encodes back to the same row`` () =
   let lines = [ [ "a"; "b" ]; [ "1"; "2" ] ]
 
   let decoded =
-    Table.decodeRows TableOptions.csv (Decode.dictionary Decode.string) (Seq.map Seq.ofList lines)
+    Table.decodeRows (Decode.dictionary Decode.string) (Seq.map Seq.ofList lines)
     |> Seq.choose Result.toOption
     |> List.ofSeq
 
-  test <@ encode TableOptions.csv (Encode.dictionary [ "a"; "b" ] Encode.string) decoded = lines @>
+  test <@ encode TableOptions.defaults (Encode.dictionary [ "a"; "b" ] Encode.string) decoded = lines @>
 
 [<Test>]
 let ``fields pads short rows`` () =
-  let actual = encode TableOptions.csv (Encode.fields [ "a"; "b" ]) [ [| "1" |] ]
+  let actual = encode TableOptions.defaults (Encode.fields [ "a"; "b" ]) [ [| "1" |] ]
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
 [<Test>]
