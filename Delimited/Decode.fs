@@ -96,11 +96,7 @@ module Decode =
       RowDecoder(run decoder >> Result.map f)
 
     /// Runs both decoders and keeps the errors from both.
-    let map2
-      (f: 'a -> 'b -> 'c)
-      (da: RowDecoder<'shape, 'a>)
-      (db: RowDecoder<'shape, 'b>)
-      : RowDecoder<'shape, 'c> =
+    let map2 (f: 'a -> 'b -> 'c) (da: RowDecoder<'shape, 'a>) (db: RowDecoder<'shape, 'b>) : RowDecoder<'shape, 'c> =
       RowDecoder(fun row ->
         match run da row, run db row with
         | Ok a, Ok b -> Ok(f a b)
@@ -244,8 +240,7 @@ module Decode =
     Field.either (left |> Field.map Choice1Of2) (right |> Field.map Choice2Of2)
 
   let private singleFieldAt (index: int) (decoder: FieldDecoder<'a>) (row: Row) =
-    let column =
-      { Index = index; Header = Array.tryItem index row.Headers }
+    let column = { Index = index; Header = Array.tryItem index row.Headers }
 
     match Delimited.Row.tryGet index row with
     | ValueNone -> Error { Row = row.Number; Problem = MissingField(column, row.FieldCount) }
@@ -264,11 +259,7 @@ module Decode =
     RowDecoder(singleField header decoder >> Result.mapError List.singleton)
 
   /// None when the column is missing, the row is short, or the field matches `missing`.
-  let optionalFieldWith
-    (missing: string)
-    (header: string)
-    (decoder: FieldDecoder<'a>)
-    : RowDecoder<Headed, 'a option> =
+  let optionalFieldWith (missing: string) (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<Headed, 'a option> =
     RowDecoder(fun row ->
       match singleField header (optionWith missing decoder) row with
       | Ok v -> Ok v
@@ -316,8 +307,7 @@ type RowDecoderBuilder() =
   member _.Bind(decoder: RowDecoder<'shape, 'a>, f: 'a -> RowDecoder<'shape, 'b>) : RowDecoder<'shape, 'b> =
     Decode.Row.andThen f decoder
 
-  member _.BindReturn(decoder: RowDecoder<'shape, 'a>, f: 'a -> 'b) : RowDecoder<'shape, 'b> =
-    Decode.Row.map f decoder
+  member _.BindReturn(decoder: RowDecoder<'shape, 'a>, f: 'a -> 'b) : RowDecoder<'shape, 'b> = Decode.Row.map f decoder
 
   member _.MergeSources(da: RowDecoder<'shape, 'a>, db: RowDecoder<'shape, 'b>) : RowDecoder<'shape, 'a * 'b> =
     Decode.Row.map2 (fun a b -> a, b) da db

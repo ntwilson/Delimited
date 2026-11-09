@@ -130,7 +130,11 @@ module Table =
     readAsyncWithOptions TableOptions.defaults decoder source
 
   /// Like `readAsync`, but throws a DecodeException at the first row that fails.
-  let readOrFailAsyncWithOptions (options: TableOptions<'shape>) (decoder: RowDecoder<'shape, 'a>) (source: Source) : TaskSeq<'a> =
+  let readOrFailAsyncWithOptions
+    (options: TableOptions<'shape>)
+    (decoder: RowDecoder<'shape, 'a>)
+    (source: Source)
+    : TaskSeq<'a> =
     readAsyncWithOptions options decoder source |> TaskSeq.map orFail
 
   /// `readOrFailAsyncWithOptions` with `TableOptions.defaults`.
@@ -161,7 +165,11 @@ module Table =
     readWithOptions TableOptions.defaults decoder source
 
   /// Like `read`, but throws a DecodeException at the first row that fails.
-  let readOrFailWithOptions (options: TableOptions<'shape>) (decoder: RowDecoder<'shape, 'a>) (source: Source) : 'a seq =
+  let readOrFailWithOptions
+    (options: TableOptions<'shape>)
+    (decoder: RowDecoder<'shape, 'a>)
+    (source: Source)
+    : 'a seq =
     readWithOptions options decoder source |> Seq.map orFail
 
   /// `readOrFailWithOptions` with `TableOptions.defaults`.
@@ -199,7 +207,11 @@ module Table =
     readAllWithOptions TableOptions.defaults decoder source
 
   /// Full access to Sylvan's reader, for anything the codecs don't cover.
-  let withReaderAsyncWithOptions (options: TableOptions<'shape>) (source: Source) (f: CsvDataReader -> Task<'a>) : Task<'a> =
+  let withReaderAsyncWithOptions
+    (options: TableOptions<'shape>)
+    (source: Source)
+    (f: CsvDataReader -> Task<'a>)
+    : Task<'a> =
     task {
       let struct (textReader, owner) = openReader source
       use _ = owner
@@ -298,11 +310,7 @@ module Table =
       use e = rows.GetEnumerator()
 
       if not options.HasHeaders || e.MoveNext() then
-        let headers =
-          if options.HasHeaders then
-            Seq.toArray e.Current
-          else
-            [||]
+        let headers = if options.HasHeaders then Seq.toArray e.Current else [||]
 
         let ordinals = Row.ordinalsOf options.HeaderComparer headers
 

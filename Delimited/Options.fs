@@ -64,11 +64,17 @@ module TableOptions =
 
   /// Runs last, so it can override any other option.
   /// TURNING OFF HasHeaders HERE BYPASSES THE Headed/Positional CHECK; USE withoutHeaders INSTEAD.
-  let withReaderConfig (configure: CsvDataReaderOptions -> unit) (options: TableOptions<'shape>) : TableOptions<'shape> =
+  let withReaderConfig
+    (configure: CsvDataReaderOptions -> unit)
+    (options: TableOptions<'shape>)
+    : TableOptions<'shape> =
     { options with ConfigureReader = configure }
 
   /// Runs last, so it can override any other option.
-  let withWriterConfig (configure: CsvDataWriterOptions -> unit) (options: TableOptions<'shape>) : TableOptions<'shape> =
+  let withWriterConfig
+    (configure: CsvDataWriterOptions -> unit)
+    (options: TableOptions<'shape>)
+    : TableOptions<'shape> =
     { options with ConfigureWriter = configure }
 
   let internal toReaderOptions (options: TableOptions<'shape>) : CsvDataReaderOptions =
