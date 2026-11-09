@@ -177,22 +177,17 @@ let ``index errors name the header only when the file has one`` () =
   test <@ List.ofSeq withoutHeaders = invalid None @>
 
 [<Test>]
-let ``header-keyed decoders fail on a table without headers`` () =
-  let decode (d: RowDecoder<'a>) =
-    Table.decodeRowsWithOptions
-      (TableOptions.withoutHeaders TableOptions.defaults)
-      (Decode.Row.map ignore d)
-      (rows [ [ "1" ] ])
-    |> Seq.map (Result.mapError (List.map _.Problem))
-    |> List.ofSeq
+let ``index combines with field on a table with headers`` () =
+  let d =
+    decoder {
+      let! first = Decode.index 0 Decode.int
+      and! b = Decode.field "b" Decode.int
+      return first + b
+    }
 
-  let field = decode (Decode.field "a" Decode.int)
-  let optionalField = decode (Decode.optionalField "a" Decode.int)
-  let dictionary = decode (Decode.dictionary Decode.int)
+  let actual = Table.decodeRows d (rows [ [ "a"; "b" ]; [ "1"; "2" ] ])
 
-  test <@ field = [ Error [ NoHeaderRow ] ] @>
-  test <@ optionalField = [ Error [ NoHeaderRow ] ] @>
-  test <@ dictionary = [ Error [ NoHeaderRow ] ] @>
+  test <@ List.ofSeq actual = [ Ok 3 ] @>
 
 [<Test>]
 let ``numbers accept thousands separators`` () =
@@ -204,7 +199,7 @@ let ``numbers accept thousands separators`` () =
 [<Test>]
 let ``Row.fail fails every row with its message`` () =
   let actual =
-    Table.decodeRows (Decode.Row.fail "nope": RowDecoder<int>) (rows [ [ "a" ]; [ "1" ]; [ "2" ] ])
+    Table.decodeRows (Decode.Row.fail "nope": RowDecoder<Headed, int>) (rows [ [ "a" ]; [ "1" ]; [ "2" ] ])
     |> List.ofSeq
 
   test

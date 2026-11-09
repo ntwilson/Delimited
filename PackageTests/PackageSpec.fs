@@ -23,7 +23,7 @@ let readingCodec: RowCodec<Reading> =
     return { Name = name; Temp = temp }
   }
 
-let packageAssembly = typeof<TableOptions>.Assembly
+let packageAssembly = typeof<TableOptions<Headed>>.Assembly
 
 let sourceLinkKind = Guid "CC110556-A091-4D38-9FEC-25AB9A351A6A"
 

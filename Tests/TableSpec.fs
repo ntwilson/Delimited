@@ -124,42 +124,6 @@ let ``readAll returns the passing rows and the errors from every failing row in 
   test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
   test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
-let silentFailure: RowDecoder<Note> = fun _ -> Error []
-
-[<Test>]
-let ``decodeRows reports a row whose decoder fails with no errors`` () =
-  let rowsOf options rows =
-    Table.decodeRowsWithOptions options silentFailure rows
-    |> Seq.map (Result.mapError (List.map _.Row))
-    |> List.ofSeq
-
-  let fields = [ [ "1"; "a" ]; [ "2"; "b" ] ] |> List.map Seq.ofList
-  let withHeaders = Seq.ofList (Seq.ofList [ "id"; "text" ] :: fields)
-  let noHeaders = { TableOptions.defaults with HasHeaders = false }
-
-  test <@ rowsOf TableOptions.defaults withHeaders = [ Error [ 1L ]; Error [ 2L ] ] @>
-  test <@ rowsOf noHeaders (Seq.ofList fields) = [ Error [ 1L ]; Error [ 2L ] ] @>
-
-[<Test>]
-let ``readAll reports a row whose decoder fails with no errors`` () =
-  let values, errors = Table.readAll silentFailure mixedRows
-  test <@ values = [] @>
-  test <@ errors |> List.map _.Row = [ 1L; 2L; 3L; 4L ] @>
-
-[<Test>]
-let ``readAllAsync reports a row whose decoder fails with no errors`` () =
-  let values, errors = (Table.readAllAsync silentFailure mixedRows).Result
-
-  test <@ values = [] @>
-  test <@ errors |> List.map _.Row = [ 1L; 2L; 3L; 4L ] @>
-
-[<Test>]
-let ``readOrFail gives a message when the decoder fails with no errors`` () =
-  let ex =
-    Assert.Throws<DecodeException>(fun () -> Table.readOrFail silentFailure mixedRows |> Seq.iter ignore)
-
-  test <@ ex.Message <> "" @>
-
 [<Test>]
 let ``readAll of an empty table is empty`` () =
   test <@ Table.readAll noteCodec.Decode (Source.Text "id,text\n") = ([], []) @>

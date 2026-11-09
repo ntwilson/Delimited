@@ -13,7 +13,6 @@ type DecodeProblem =
   | MissingField of Column * fieldCount: int
   | InvalidValue of Column * value: string * message: string
   | RowFailed of message: string
-  | NoHeaderRow
 
 type DecodeError = { Row: int64; Problem: DecodeProblem }
 
@@ -30,7 +29,6 @@ module DecodeError =
       | MissingField(c, fieldCount) -> $"%s{describeColumn c} is missing; the row has only %i{fieldCount} fields"
       | InvalidValue(c, value, message) -> $"%s{describeColumn c} has value \"%s{value}\": %s{message}"
       | RowFailed message -> message
-      | NoHeaderRow -> "the table has no header row, so columns can't be found by name"
 
     $"Row %i{e.Row}: %s{detail}"
 
@@ -41,8 +39,17 @@ type DecodeException(errors: DecodeError list) =
 /// Parses one field's text.
 type FieldDecoder<'a> = string -> Result<'a, string>
 
+/// Tags decoders that find columns by header name, and options for tables with a header row.
+[<AbstractClass; Sealed>]
+type Headed = class end
+
+/// Tags options for tables without a header row.
+[<AbstractClass; Sealed>]
+type Positional = class end
+
 /// Decodes one row. Errors are a list so independent fields can all report at once.
-type RowDecoder<'a> = Row -> Result<'a, DecodeError list>
+/// 'shape is Headed when the decoder needs a header row; decoders that only use positions stay generic.
+type RowDecoder<'shape, 'a> = internal RowDecoder of (Row -> Result<'a, DecodeError list>)
 
 module internal Results =
   let collect (values: 'a list, errors: 'e list) (result: Result<'a, 'e list>) =
@@ -75,38 +82,45 @@ module Decode =
           | Error e2 -> Error $"%s{e1}, or %s{e2}"
 
   module Row =
+    let internal run (RowDecoder decode: RowDecoder<'shape, 'a>) (row: Row) = decode row
+
     let private error (row: Row) (problem: DecodeProblem) =
       Error [ { Row = row.Number; Problem = problem } ]
 
-    let succeed (value: 'a) : RowDecoder<'a> = fun _ -> Ok value
+    let succeed (value: 'a) : RowDecoder<'shape, 'a> = RowDecoder(fun _ -> Ok value)
 
-    let fail (message: string) : RowDecoder<'a> =
-      fun row -> error row (RowFailed message)
+    let fail (message: string) : RowDecoder<'shape, 'a> =
+      RowDecoder(fun row -> error row (RowFailed message))
 
-    let map (f: 'a -> 'b) (decoder: RowDecoder<'a>) : RowDecoder<'b> = decoder >> Result.map f
+    let map (f: 'a -> 'b) (decoder: RowDecoder<'shape, 'a>) : RowDecoder<'shape, 'b> =
+      RowDecoder(run decoder >> Result.map f)
 
     /// Runs both decoders and keeps the errors from both.
-    let map2 (f: 'a -> 'b -> 'c) (da: RowDecoder<'a>) (db: RowDecoder<'b>) : RowDecoder<'c> =
-      fun row ->
-        match da row, db row with
+    let map2
+      (f: 'a -> 'b -> 'c)
+      (da: RowDecoder<'shape, 'a>)
+      (db: RowDecoder<'shape, 'b>)
+      : RowDecoder<'shape, 'c> =
+      RowDecoder(fun row ->
+        match run da row, run db row with
         | Ok a, Ok b -> Ok(f a b)
         | Error ea, Error eb -> Error(ea @ eb)
         | Error e, Ok _
-        | Ok _, Error e -> Error e
+        | Ok _, Error e -> Error e)
 
-    let andThen (f: 'a -> RowDecoder<'b>) (decoder: RowDecoder<'a>) : RowDecoder<'b> =
-      fun row -> decoder row |> Result.bind (fun a -> f a row)
+    let andThen (f: 'a -> RowDecoder<'shape, 'b>) (decoder: RowDecoder<'shape, 'a>) : RowDecoder<'shape, 'b> =
+      RowDecoder(fun row -> run decoder row |> Result.bind (fun a -> run (f a) row))
 
     /// `first` if it succeeds, else `second`; when both fail, the errors from both.
     /// For more than two, use `List.reduce Decode.Row.either`.
-    let either (first: RowDecoder<'a>) (second: RowDecoder<'a>) : RowDecoder<'a> =
-      fun row ->
-        match first row with
+    let either (first: RowDecoder<'shape, 'a>) (second: RowDecoder<'shape, 'a>) : RowDecoder<'shape, 'a> =
+      RowDecoder(fun row ->
+        match run first row with
         | Ok v -> Ok v
         | Error e1 ->
-          match second row with
+          match run second row with
           | Ok v -> Ok v
-          | Error e2 -> Error(e1 @ e2)
+          | Error e2 -> Error(e1 @ e2))
 
   let private inv = CultureInfo.InvariantCulture
 
@@ -231,7 +245,7 @@ module Decode =
 
   let private singleFieldAt (index: int) (decoder: FieldDecoder<'a>) (row: Row) =
     let column =
-      { Index = index; Header = row.Headers |> Option.bind (Array.tryItem index) }
+      { Index = index; Header = Array.tryItem index row.Headers }
 
     match Delimited.Row.tryGet index row with
     | ValueNone -> Error { Row = row.Number; Problem = MissingField(column, row.FieldCount) }
@@ -240,69 +254,75 @@ module Decode =
       | Ok v -> Ok v
       | Error message -> Error { Row = row.Number; Problem = InvalidValue(column, s, message) }
 
-  let private singleField (header: string) (decoder: FieldDecoder<'a>) =
-    fun row ->
-      match row.Headers, Delimited.Row.tryOrdinal header row with
-      | None, _ -> Error { Row = row.Number; Problem = NoHeaderRow }
-      | Some _, ValueSome i -> singleFieldAt i decoder row
-      | Some _, ValueNone -> Error { Row = row.Number; Problem = ColumnNotFound header }
+  let private singleField (header: string) (decoder: FieldDecoder<'a>) (row: Row) =
+    match Delimited.Row.tryOrdinal header row with
+    | ValueSome i -> singleFieldAt i decoder row
+    | ValueNone -> Error { Row = row.Number; Problem = ColumnNotFound header }
 
   /// The named column, which must exist.
-  let field (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
-    singleField header decoder >> Result.mapError List.singleton
+  let field (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<Headed, 'a> =
+    RowDecoder(singleField header decoder >> Result.mapError List.singleton)
 
-  /// None when the column is missing, the row is short, or the field matches `missing`. Fails if the table has no header row.
-  let optionalFieldWith (missing: string) (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
-    fun row ->
+  /// None when the column is missing, the row is short, or the field matches `missing`.
+  let optionalFieldWith
+    (missing: string)
+    (header: string)
+    (decoder: FieldDecoder<'a>)
+    : RowDecoder<Headed, 'a option> =
+    RowDecoder(fun row ->
       match singleField header (optionWith missing decoder) row with
       | Ok v -> Ok v
       | Error { Problem = MissingField _ }
       | Error { Problem = ColumnNotFound _ } -> Ok None
-      | Error e -> Error [ e ]
+      | Error e -> Error [ e ])
 
-  /// None when the column is missing, the row is short, or the field is blank. Fails if the table has no header row.
-  let optionalField (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
+  /// None when the column is missing, the row is short, or the field is blank.
+  let optionalField (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<Headed, 'a option> =
     optionalFieldWith "" header decoder
 
-  /// The 0-based column, for files without headers.
-  let index (i: int) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
-    singleFieldAt i decoder >> Result.mapError List.singleton
+  /// The 0-based column. Works with or without a header row.
+  let index (i: int) (decoder: FieldDecoder<'a>) : RowDecoder<'shape, 'a> =
+    RowDecoder(singleFieldAt i decoder >> Result.mapError List.singleton)
 
   /// Every field in the row.
-  let fields: RowDecoder<string[]> =
-    fun row -> Ok(Array.init row.FieldCount row.GetString)
+  let fields<'shape> : RowDecoder<'shape, string[]> =
+    RowDecoder(fun row -> Ok(Array.init row.FieldCount row.GetString))
 
-  /// The listed columns, keyed by header using `TableOptions.HeaderComparer`; each must exist. A repeated header is read once.
-  let dictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
-    fun row ->
-      if row.Headers.IsNone then
-        Error [ { Row = row.Number; Problem = NoHeaderRow } ]
-      else
-        let pairs, errors =
-          Enumerable.Distinct(headers, row.HeaderComparer)
-          |> Seq.map (fun h -> field h decoder row |> Result.map (fun v -> KeyValuePair(h, v)))
-          |> Results.partition
+  let private dictionaryOfRow (headers: string seq) (decoder: FieldDecoder<'a>) (row: Row) =
+    let pairs, errors =
+      Enumerable.Distinct(headers, row.HeaderComparer)
+      |> Seq.map (fun h ->
+        singleField h decoder row
+        |> Result.map (fun v -> KeyValuePair(h, v))
+        |> Result.mapError List.singleton)
+      |> Results.partition
 
-        match errors with
-        | [] -> Ok(Dictionary(pairs, row.HeaderComparer))
-        | errors -> Error errors
+    match errors with
+    | [] -> Ok(Dictionary(pairs, row.HeaderComparer))
+    | errors -> Error errors
+
+  /// The listed columns, keyed by header using the options' header comparer; each must exist. A repeated header is read once.
+  let dictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Headed, Dictionary<string, 'a>> =
+    RowDecoder(dictionaryOfRow headers decoder)
 
   /// Every column, keyed by header. A repeated header keeps its first value.
-  let dictionary (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
-    fun row -> dictionaryOf (row.Headers |> Option.defaultValue [||] |> List.ofArray) decoder row
+  let dictionary (decoder: FieldDecoder<'a>) : RowDecoder<Headed, Dictionary<string, 'a>> =
+    RowDecoder(fun row -> dictionaryOfRow row.Headers decoder row)
 
 type RowDecoderBuilder() =
-  member _.Return(value: 'a) : RowDecoder<'a> = Decode.Row.succeed value
-  member _.ReturnFrom(decoder: RowDecoder<'a>) : RowDecoder<'a> = decoder
+  member _.Return(value: 'a) : RowDecoder<'shape, 'a> = Decode.Row.succeed value
+  member _.ReturnFrom(decoder: RowDecoder<'shape, 'a>) : RowDecoder<'shape, 'a> = decoder
 
-  member _.Bind(decoder: RowDecoder<'a>, f: 'a -> RowDecoder<'b>) : RowDecoder<'b> = Decode.Row.andThen f decoder
+  member _.Bind(decoder: RowDecoder<'shape, 'a>, f: 'a -> RowDecoder<'shape, 'b>) : RowDecoder<'shape, 'b> =
+    Decode.Row.andThen f decoder
 
-  member _.BindReturn(decoder: RowDecoder<'a>, f: 'a -> 'b) : RowDecoder<'b> = Decode.Row.map f decoder
+  member _.BindReturn(decoder: RowDecoder<'shape, 'a>, f: 'a -> 'b) : RowDecoder<'shape, 'b> =
+    Decode.Row.map f decoder
 
-  member _.MergeSources(da: RowDecoder<'a>, db: RowDecoder<'b>) : RowDecoder<'a * 'b> =
+  member _.MergeSources(da: RowDecoder<'shape, 'a>, db: RowDecoder<'shape, 'b>) : RowDecoder<'shape, 'a * 'b> =
     Decode.Row.map2 (fun a b -> a, b) da db
 
-  member _.Zero() : RowDecoder<unit> = Decode.Row.succeed ()
+  member _.Zero() : RowDecoder<'shape, unit> = Decode.Row.succeed ()
 
 [<AutoOpen>]
 module RowDecoderBuilderInstance =
