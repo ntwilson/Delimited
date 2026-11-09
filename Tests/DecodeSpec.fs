@@ -21,17 +21,14 @@ let rows (lines: string list list) = lines |> Seq.map Seq.ofList
 [<Test>]
 let ``and! decodes a record`` () =
   let actual =
-    Table.decodeRows TableOptions.csv reading (rows [ [ "name"; "temp"; "count" ]; [ "a"; "1.5"; "2" ] ])
+    Table.decodeRows reading (rows [ [ "name"; "temp"; "count" ]; [ "a"; "1.5"; "2" ] ])
 
   test <@ List.ofSeq actual = [ Ok { Name = "a"; Temp = 1.5; Count = 2 } ] @>
 
 [<Test>]
 let ``and! reports every bad field with its row number`` () =
   let actual =
-    Table.decodeRows
-      TableOptions.csv
-      reading
-      (rows [ [ "name"; "temp"; "count" ]; [ "a"; "1"; "2" ]; [ "b"; "hot"; "many" ] ])
+    Table.decodeRows reading (rows [ [ "name"; "temp"; "count" ]; [ "a"; "1"; "2" ]; [ "b"; "hot"; "many" ] ])
     |> List.ofSeq
 
   let expected: Result<Reading, DecodeError list> list =
@@ -65,7 +62,7 @@ let ``let! short-circuits for dependent fields`` () =
     }
 
   let actual =
-    Table.decodeRows TableOptions.csv d (rows [ [ "kind"; "value" ]; [ "int"; "007" ]; [ "text"; "007" ] ])
+    Table.decodeRows d (rows [ [ "kind"; "value" ]; [ "int"; "007" ]; [ "text"; "007" ] ])
 
   test <@ List.ofSeq actual = [ Ok "7"; Ok "007" ] @>
 
@@ -74,7 +71,7 @@ let ``missing column and short rows`` () =
   let header = [ "a"; "b" ]
 
   let missing =
-    Table.decodeRows TableOptions.csv (Decode.field "c" Decode.int) (rows [ header; [ "1"; "2" ] ])
+    Table.decodeRows (Decode.field "c" Decode.int) (rows [ header; [ "1"; "2" ] ])
 
   let expected: Result<int, DecodeError list> list =
     [ Error [ { Row = 1; Problem = ColumnNotFound "c" } ] ]
@@ -82,7 +79,7 @@ let ``missing column and short rows`` () =
   test <@ List.ofSeq missing = expected @>
 
   let short =
-    Table.decodeRows TableOptions.csv (Decode.field "b" Decode.int) (rows [ header; [ "1" ] ])
+    Table.decodeRows (Decode.field "b" Decode.int) (rows [ header; [ "1" ] ])
 
   let expectedShort: Result<int, DecodeError list> list =
     [
@@ -93,10 +90,7 @@ let ``missing column and short rows`` () =
 
   test
     <@
-      Table.decodeRows
-        TableOptions.csv
-        (Decode.optionalField "b" Decode.int)
-        (rows [ header; [ "1" ]; [ "1"; "" ]; [ "1"; "2" ] ])
+      Table.decodeRows (Decode.optionalField "b" Decode.int) (rows [ header; [ "1" ]; [ "1"; "" ]; [ "1"; "2" ] ])
       |> List.ofSeq
         =
         [ Ok None; Ok None; Ok(Some 2) ]
@@ -107,7 +101,10 @@ let ``index works without headers`` () =
   let d = Decode.Row.map2 (+) (Decode.index 0 Decode.int) (Decode.index 1 Decode.int)
 
   let actual =
-    Table.decodeRows (TableOptions.withoutHeaders TableOptions.csv) d (rows [ [ "1"; "2" ]; [ "3"; "4" ] ])
+    Table.decodeRowsWithOptions
+      (TableOptions.withoutHeaders TableOptions.defaults)
+      d
+      (rows [ [ "1"; "2" ]; [ "3"; "4" ] ])
 
   test <@ List.ofSeq actual = [ Ok 3; Ok 7 ] @>
 
@@ -130,14 +127,11 @@ let oneShot (lines: string list list) =
 [<Test>]
 let ``decodeRows reads a one-shot source once`` () =
   let withHeaders =
-    Table.decodeRows
-      TableOptions.csv
-      (Decode.field "b" Decode.int)
-      (oneShot [ [ "a"; "b" ]; [ "1"; "2" ]; [ "3"; "4" ] ])
+    Table.decodeRows (Decode.field "b" Decode.int) (oneShot [ [ "a"; "b" ]; [ "1"; "2" ]; [ "3"; "4" ] ])
 
   let withoutHeaders =
-    Table.decodeRows
-      (TableOptions.withoutHeaders TableOptions.csv)
+    Table.decodeRowsWithOptions
+      (TableOptions.withoutHeaders TableOptions.defaults)
       (Decode.index 1 Decode.int)
       (oneShot [ [ "1"; "2" ]; [ "3"; "4" ] ])
 
@@ -154,16 +148,19 @@ let ``decodeRows doesn't touch the source until enumerated`` () =
       yield! rows [ [ "a" ]; [ "1" ] ]
     }
 
-  let _ = Table.decodeRows TableOptions.csv (Decode.field "a" Decode.int) source
+  let _ = Table.decodeRows (Decode.field "a" Decode.int) source
   test <@ not touched.Value @>
 
 [<Test>]
 let ``index errors name the header only when the file has one`` () =
   let withHeaders =
-    Table.decodeRows TableOptions.csv (Decode.index 1 Decode.int) (rows [ [ "a"; "b" ]; [ "1"; "x" ] ])
+    Table.decodeRows (Decode.index 1 Decode.int) (rows [ [ "a"; "b" ]; [ "1"; "x" ] ])
 
   let withoutHeaders =
-    Table.decodeRows (TableOptions.withoutHeaders TableOptions.csv) (Decode.index 1 Decode.int) (rows [ [ "1"; "x" ] ])
+    Table.decodeRowsWithOptions
+      (TableOptions.withoutHeaders TableOptions.defaults)
+      (Decode.index 1 Decode.int)
+      (rows [ [ "1"; "x" ] ])
 
   let invalid header : Result<int, DecodeError list> list =
     [
@@ -182,7 +179,10 @@ let ``index errors name the header only when the file has one`` () =
 [<Test>]
 let ``header-keyed decoders fail on a table without headers`` () =
   let decode (d: RowDecoder<'a>) =
-    Table.decodeRows (TableOptions.withoutHeaders TableOptions.csv) (Decode.Row.map ignore d) (rows [ [ "1" ] ])
+    Table.decodeRowsWithOptions
+      (TableOptions.withoutHeaders TableOptions.defaults)
+      (Decode.Row.map ignore d)
+      (rows [ [ "1" ] ])
     |> Seq.map (Result.mapError (List.map _.Problem))
     |> List.ofSeq
 
@@ -204,7 +204,7 @@ let ``numbers accept thousands separators`` () =
 [<Test>]
 let ``Row.fail fails every row with its message`` () =
   let actual =
-    Table.decodeRows TableOptions.csv (Decode.Row.fail "nope": RowDecoder<int>) (rows [ [ "a" ]; [ "1" ]; [ "2" ] ])
+    Table.decodeRows (Decode.Row.fail "nope": RowDecoder<int>) (rows [ [ "a" ]; [ "1" ]; [ "2" ] ])
     |> List.ofSeq
 
   test
@@ -220,12 +220,10 @@ let ``Row.fail fails every row with its message`` () =
 let ``a repeated header reads its first column`` () =
   let lines = rows [ [ "a"; "a" ]; [ "1"; "2" ] ]
 
-  let field =
-    Table.decodeRows TableOptions.csv (Decode.field "a" Decode.int) lines
-    |> List.ofSeq
+  let field = Table.decodeRows (Decode.field "a" Decode.int) lines |> List.ofSeq
 
   let dictionary =
-    Table.decodeRows TableOptions.csv (Decode.dictionary Decode.int |> Decode.Row.map (fun d -> d["a"], d.Count)) lines
+    Table.decodeRows (Decode.dictionary Decode.int |> Decode.Row.map (fun d -> d["a"], d.Count)) lines
     |> List.ofSeq
 
   test <@ field = [ Ok 1 ] @>
@@ -255,8 +253,7 @@ let ``either takes the first success`` () =
   let d =
     Decode.Row.either (Decode.field "x" Decode.int |> Decode.Row.map float) (Decode.field "x" Decode.float)
 
-  let actual =
-    Table.decodeRows TableOptions.csv d (rows [ [ "x" ]; [ "2" ]; [ "2.5" ] ])
+  let actual = Table.decodeRows d (rows [ [ "x" ]; [ "2" ]; [ "2.5" ] ])
 
   test <@ List.ofSeq actual = [ Ok 2.0; Ok 2.5 ] @>
 
@@ -268,7 +265,7 @@ let ``either reduced over a list reports every decoder's error in order`` () =
     |> List.reduce Decode.Row.either
 
   let actual =
-    Table.decodeRows TableOptions.csv d (rows [ [ "a"; "b"; "c" ]; [ "x"; "y"; "3" ]; [ "x"; "y"; "z" ] ])
+    Table.decodeRows d (rows [ [ "a"; "b"; "c" ]; [ "x"; "y"; "3" ]; [ "x"; "y"; "z" ] ])
     |> List.ofSeq
 
   test <@ actual.[0] = Ok 3 @>
@@ -290,7 +287,7 @@ let ``either reduced over a list reports every decoder's error in order`` () =
 [<Test>]
 let ``dictionary maps headers to values and requires every field`` () =
   let actual =
-    Table.decodeRows TableOptions.csv (Decode.dictionary Decode.string) (rows [ [ "a"; "b" ]; [ "1"; "2" ]; [ "3" ] ])
+    Table.decodeRows (Decode.dictionary Decode.string) (rows [ [ "a"; "b" ]; [ "1"; "2" ]; [ "3" ] ])
     |> Seq.map (Result.map (Seq.map (fun kv -> kv.Key, kv.Value) >> List.ofSeq))
     |> Seq.map (Result.mapError (List.map _.Problem))
     |> List.ofSeq
@@ -307,10 +304,7 @@ let ``dictionary maps headers to values and requires every field`` () =
 [<Test>]
 let ``dictionaryOf reads only the listed columns and requires each`` () =
   let decode headers =
-    Table.decodeRows
-      TableOptions.csv
-      (Decode.dictionaryOf headers Decode.int)
-      (rows [ [ "a"; "b"; "c" ]; [ "1"; "2"; "3" ] ])
+    Table.decodeRows (Decode.dictionaryOf headers Decode.int) (rows [ [ "a"; "b"; "c" ]; [ "1"; "2"; "3" ] ])
     |> Seq.map (Result.map (Seq.map (fun (KeyValue(k, v)) -> k, v) >> List.ofSeq >> List.sort))
     |> Seq.map (Result.mapError (List.map _.Problem))
     |> List.ofSeq
@@ -324,7 +318,7 @@ let ``dictionaryOf reads only the listed columns and requires each`` () =
 [<Test>]
 let ``dictionary reports every bad field with its column`` () =
   let actual =
-    Table.decodeRows TableOptions.csv (Decode.dictionary Decode.int) (rows [ [ "a"; "b"; "c" ]; [ "x"; "2"; "y" ] ])
+    Table.decodeRows (Decode.dictionary Decode.int) (rows [ [ "a"; "b"; "c" ]; [ "x"; "2"; "y" ] ])
     |> Seq.map (Result.mapError (List.map _.Problem))
     |> List.ofSeq
 
@@ -360,7 +354,6 @@ let ``optionWith treats only the missing string as None`` () =
 let ``optionalFieldWith reads the missing string and an absent column as None`` () =
   let actual =
     Table.decodeRows
-      TableOptions.csv
       (Decode.Row.map2
         (fun a b -> a, b)
         (Decode.optionalFieldWith "-" "a" Decode.int)
@@ -592,12 +585,12 @@ let ``timeOnlyIso rejects 24:00, offsets, mixed formats, and other formats`` () 
 let ``choiceOf2 prefers the left decoder when both accept the field`` () =
   test <@ Decode.choiceOf2 Decode.int Decode.string "5" = Ok(Choice1Of2 5) @>
 
-let caseInsensitive = TableOptions.withCaseInsensitiveHeaders TableOptions.csv
+let caseInsensitive = TableOptions.withCaseInsensitiveHeaders TableOptions.defaults
 
 [<Test>]
 let ``header case matters by default`` () =
   let actual =
-    Table.decodeRows TableOptions.csv (Decode.field "name" Decode.string) (rows [ [ "Name" ]; [ "a" ] ])
+    Table.decodeRows (Decode.field "name" Decode.string) (rows [ [ "Name" ]; [ "a" ] ])
 
   let expected: Result<string, DecodeError list> list =
     [ Error [ { Row = 1; Problem = ColumnNotFound "name" } ] ]
@@ -607,21 +600,24 @@ let ``header case matters by default`` () =
 [<Test>]
 let ``withCaseInsensitiveHeaders matches fields regardless of case`` () =
   let actual =
-    Table.decodeRows caseInsensitive reading (rows [ [ "NAME"; "Temp"; "count" ]; [ "a"; "1.5"; "2" ] ])
+    Table.decodeRowsWithOptions caseInsensitive reading (rows [ [ "NAME"; "Temp"; "count" ]; [ "a"; "1.5"; "2" ] ])
 
   test <@ List.ofSeq actual = [ Ok { Name = "a"; Temp = 1.5; Count = 2 } ] @>
 
 [<Test>]
 let ``withCaseInsensitiveHeaders applies to optional fields`` () =
   let actual =
-    Table.decodeRows caseInsensitive (Decode.optionalField "b" Decode.int) (rows [ [ "a"; "B" ]; [ "1"; "2" ] ])
+    Table.decodeRowsWithOptions
+      caseInsensitive
+      (Decode.optionalField "b" Decode.int)
+      (rows [ [ "a"; "B" ]; [ "1"; "2" ] ])
 
   test <@ List.ofSeq actual = [ Ok(Some 2) ] @>
 
 [<Test>]
 let ``withCaseInsensitiveHeaders applies when reading text`` () =
   let actual =
-    Table.read caseInsensitive (Decode.field "name" Decode.string) (Source.Text "Name\na\n")
+    Table.readWithOptions caseInsensitive (Decode.field "name" Decode.string) (Source.Text "Name\na\n")
     |> List.ofSeq
 
   test <@ actual = [ Ok "a" ] @>
@@ -629,7 +625,7 @@ let ``withCaseInsensitiveHeaders applies when reading text`` () =
 [<Test>]
 let ``headers differing only in case keep the first column when matching case-insensitively`` () =
   let actual =
-    Table.decodeRows caseInsensitive (Decode.field "id" Decode.int) (rows [ [ "Id"; "ID" ]; [ "1"; "2" ] ])
+    Table.decodeRowsWithOptions caseInsensitive (Decode.field "id" Decode.int) (rows [ [ "Id"; "ID" ]; [ "1"; "2" ] ])
 
   test <@ List.ofSeq actual = [ Ok 1 ] @>
 
@@ -638,13 +634,13 @@ let ``case-insensitive dictionaries read each column once and look up keys in an
   let lookups (d: System.Collections.Generic.Dictionary<string, int>) = d.Count, d["A"], d["b"]
 
   let listed =
-    Table.decodeRows
+    Table.decodeRowsWithOptions
       caseInsensitive
       (Decode.dictionaryOf [ "a"; "A"; "B" ] Decode.int |> Decode.Row.map lookups)
       (rows [ [ "a"; "B" ]; [ "1"; "2" ] ])
 
   let every =
-    Table.decodeRows
+    Table.decodeRowsWithOptions
       caseInsensitive
       (Decode.dictionary Decode.int |> Decode.Row.map lookups)
       (rows [ [ "a"; "A"; "B" ]; [ "1"; "9"; "2" ] ])

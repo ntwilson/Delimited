@@ -110,7 +110,7 @@ module Table =
     | Error errors -> raise (DecodeException errors)
 
   /// Streams decoded rows. The source is opened when enumeration starts and closed when it ends.
-  let readAsync
+  let readAsyncWithOptions
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
     (source: Source)
@@ -138,12 +138,24 @@ module Table =
           more <- false
     }
 
+  /// `readAsyncWithOptions` with `TableOptions.defaults`.
+  let readAsync (decoder: RowDecoder<'a>) (source: Source) =
+    readAsyncWithOptions TableOptions.defaults decoder source
+
   /// Like `readAsync`, but throws a DecodeException at the first row that fails.
-  let readOrFailAsync (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : TaskSeq<'a> =
-    readAsync options decoder source |> TaskSeq.map orFail
+  let readOrFailAsyncWithOptions (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : TaskSeq<'a> =
+    readAsyncWithOptions options decoder source |> TaskSeq.map orFail
+
+  /// `readOrFailAsyncWithOptions` with `TableOptions.defaults`.
+  let readOrFailAsync (decoder: RowDecoder<'a>) (source: Source) =
+    readOrFailAsyncWithOptions TableOptions.defaults decoder source
 
   /// The synchronous version of `readAsync`.
-  let read (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : Result<'a, DecodeError list> seq =
+  let readWithOptions
+    (options: TableOptions)
+    (decoder: RowDecoder<'a>)
+    (source: Source)
+    : Result<'a, DecodeError list> seq =
     seq {
       let struct (textReader, owner) = openReader source
       use _ = owner
@@ -157,29 +169,50 @@ module Table =
         |> Seq.map (fun number -> decodeRow decoder (rowOf options number headers ordinals csv))
     }
 
+  /// `readWithOptions` with `TableOptions.defaults`.
+  let read (decoder: RowDecoder<'a>) (source: Source) =
+    readWithOptions TableOptions.defaults decoder source
+
   /// Like `read`, but throws a DecodeException at the first row that fails.
-  let readOrFail (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a seq =
-    read options decoder source |> Seq.map orFail
+  let readOrFailWithOptions (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a seq =
+    readWithOptions options decoder source |> Seq.map orFail
+
+  /// `readOrFailWithOptions` with `TableOptions.defaults`.
+  let readOrFail (decoder: RowDecoder<'a>) (source: Source) =
+    readOrFailWithOptions TableOptions.defaults decoder source
 
   /// Reads every row eagerly, giving the values of the rows that decode and the errors from those that don't.
-  let readAllAsync
+  let readAllAsyncWithOptions
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
     (source: Source)
     : Task<'a list * DecodeError list> =
     task {
       let! state =
-        readAsync options decoder source |> TaskSeq.fold Results.collect ([], [])
+        readAsyncWithOptions options decoder source
+        |> TaskSeq.fold Results.collect ([], [])
 
       return Results.finish state
     }
 
+  /// `readAllAsyncWithOptions` with `TableOptions.defaults`.
+  let readAllAsync (decoder: RowDecoder<'a>) (source: Source) =
+    readAllAsyncWithOptions TableOptions.defaults decoder source
+
   /// The synchronous version of `readAllAsync`.
-  let readAll (options: TableOptions) (decoder: RowDecoder<'a>) (source: Source) : 'a list * DecodeError list =
-    read options decoder source |> Results.partition
+  let readAllWithOptions
+    (options: TableOptions)
+    (decoder: RowDecoder<'a>)
+    (source: Source)
+    : 'a list * DecodeError list =
+    readWithOptions options decoder source |> Results.partition
+
+  /// `readAllWithOptions` with `TableOptions.defaults`.
+  let readAll (decoder: RowDecoder<'a>) (source: Source) =
+    readAllWithOptions TableOptions.defaults decoder source
 
   /// Full access to Sylvan's reader, for anything the codecs don't cover.
-  let withReaderAsync (options: TableOptions) (source: Source) (f: CsvDataReader -> Task<'a>) : Task<'a> =
+  let withReaderAsyncWithOptions (options: TableOptions) (source: Source) (f: CsvDataReader -> Task<'a>) : Task<'a> =
     task {
       let struct (textReader, owner) = openReader source
       use _ = owner
@@ -189,6 +222,10 @@ module Table =
 
       return! f csv
     }
+
+  /// `withReaderAsyncWithOptions` with `TableOptions.defaults`.
+  let withReaderAsync (source: Source) (f: CsvDataReader -> Task<'a>) =
+    withReaderAsyncWithOptions TableOptions.defaults source f
 
   let private builder (encoder: RowEncoder<'a>) : ObjectDataReader.Builder<'a> =
     (ObjectDataReader.Builder<'a>(), encoder)
@@ -200,14 +237,18 @@ module Table =
     CsvDataWriter.Create(new KeepOpenWriter(textWriter), TableOptions.toWriterOptions options)
 
   /// Writes any DbDataReader, e.g. query results, without an encoder.
-  let writeDataReader (options: TableOptions) (sink: Sink) (reader: DbDataReader) =
+  let writeDataReaderWithOptions (options: TableOptions) (sink: Sink) (reader: DbDataReader) =
     let struct (textWriter, owner) = openWriter sink
     use _ = owner
     use csv = csvWriter options textWriter
     csv.Write reader
 
+  /// `writeDataReaderWithOptions` with `TableOptions.defaults`.
+  let writeDataReader (sink: Sink) (reader: DbDataReader) =
+    writeDataReaderWithOptions TableOptions.defaults sink reader
+
   /// The asynchronous version of `writeDataReader`.
-  let writeDataReaderAsync
+  let writeDataReaderAsyncWithOptions
     (options: TableOptions)
     (sink: Sink)
     (reader: DbDataReader)
@@ -220,22 +261,38 @@ module Table =
       return! csv.WriteAsync(reader, cancellationToken)
     }
 
-  let write (options: TableOptions) (encoder: RowEncoder<'a>) (sink: Sink) (rows: 'a seq) =
-    writeDataReader options sink ((builder encoder).Build rows)
+  /// `writeDataReaderAsyncWithOptions` with `TableOptions.defaults`.
+  let writeDataReaderAsync (sink: Sink) (reader: DbDataReader) (cancellationToken: CancellationToken) =
+    writeDataReaderAsyncWithOptions TableOptions.defaults sink reader cancellationToken
 
-  let writeAsync
+  let writeWithOptions (options: TableOptions) (encoder: RowEncoder<'a>) (sink: Sink) (rows: 'a seq) =
+    writeDataReaderWithOptions options sink ((builder encoder).Build rows)
+
+  /// `writeWithOptions` with `TableOptions.defaults`.
+  let write (encoder: RowEncoder<'a>) (sink: Sink) (rows: 'a seq) =
+    writeWithOptions TableOptions.defaults encoder sink rows
+
+  let writeAsyncWithOptions
     (options: TableOptions)
     (encoder: RowEncoder<'a>)
     (sink: Sink)
     (rows: TaskSeq<'a>)
     (cancellationToken: CancellationToken)
     =
-    writeDataReaderAsync options sink ((builder encoder).Build(rows, cancellationToken)) cancellationToken
+    writeDataReaderAsyncWithOptions options sink ((builder encoder).Build(rows, cancellationToken)) cancellationToken
 
-  let writeString (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string =
+  /// `writeAsyncWithOptions` with `TableOptions.defaults`.
+  let writeAsync (encoder: RowEncoder<'a>) (sink: Sink) (rows: TaskSeq<'a>) (cancellationToken: CancellationToken) =
+    writeAsyncWithOptions TableOptions.defaults encoder sink rows cancellationToken
+
+  let writeStringWithOptions (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string =
     use w = new StringWriter()
-    write options encoder (Sink.Writer w) rows |> ignore
+    writeWithOptions options encoder (Sink.Writer w) rows |> ignore
     string w
+
+  /// `writeStringWithOptions` with `TableOptions.defaults`.
+  let writeString (encoder: RowEncoder<'a>) (rows: 'a seq) =
+    writeStringWithOptions TableOptions.defaults encoder rows
 
   let private remaining (e: IEnumerator<'a>) =
     seq {
@@ -244,7 +301,7 @@ module Table =
     }
 
   /// Decodes rows that are already split into fields. With headers, the first row is the header row.
-  let decodeRows
+  let decodeRowsWithOptions
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
     (rows: string seq seq)
@@ -270,8 +327,12 @@ module Table =
               (Row.ofArray (int64 (i + 1)) headers options.HeaderComparer ordinals (Seq.toArray values)))
     }
 
+  /// `decodeRowsWithOptions` with `TableOptions.defaults`.
+  let decodeRows (decoder: RowDecoder<'a>) (rows: string seq seq) =
+    decodeRowsWithOptions TableOptions.defaults decoder rows
+
   /// Encodes to rows of fields, with a header row first when `options.HasHeaders`.
-  let encodeRows (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string seq seq =
+  let encodeRowsWithOptions (options: TableOptions) (encoder: RowEncoder<'a>) (rows: 'a seq) : string seq seq =
     let headers =
       if options.HasHeaders then
         Seq.singleton (encoder |> List.map fst :> string seq)
@@ -282,3 +343,7 @@ module Table =
       encoder |> List.map (fun (_, get) -> get x) :> string seq
 
     Seq.append headers (Seq.map encodeRow rows)
+
+  /// `encodeRowsWithOptions` with `TableOptions.defaults`.
+  let encodeRows (encoder: RowEncoder<'a>) (rows: 'a seq) =
+    encodeRowsWithOptions TableOptions.defaults encoder rows

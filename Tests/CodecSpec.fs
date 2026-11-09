@@ -107,11 +107,13 @@ let ``choiceOf2 decodes an ambiguous Choice2Of2 back as Choice1Of2`` () =
 
 [<Test>]
 let ``a codec drives both a column encoder and decoder`` () =
-  let options = TableOptions.csv
   let codec = Codec.choiceOf2 Codec.int Codec.string
   let values = [ Choice1Of2 1; Choice2Of2 "n/a" ]
-  let text = Table.writeString options (Encode.field "v" codec.Encode id) values
-  let actual = Table.read options (Decode.field "v" codec.Decode) (Source.Text text)
+
+  let text = Table.writeString (Encode.field "v" codec.Encode id) values
+
+  let actual = Table.read (Decode.field "v" codec.Decode) (Source.Text text)
+
   test <@ List.ofSeq actual = [ Ok(Choice1Of2 1); Ok(Choice2Of2 "n/a") ] @>
 
 type Reading = { Name: string; Temp: float; Count: int option }
@@ -141,14 +143,12 @@ let ``dictionary codec round-trips alongside other fields`` () =
   let lines = [ [ "id"; "jan"; "feb" ]; [ "1"; "2.5"; "" ] ]
 
   let decoded =
-    Table.decodeRows TableOptions.csv site.Decode (Seq.map Seq.ofList lines)
+    Table.decodeRows site.Decode (Seq.map Seq.ofList lines)
     |> Seq.choose Result.toOption
     |> List.ofSeq
 
   let encoded =
-    Table.encodeRows TableOptions.csv site.Encode decoded
-    |> Seq.map List.ofSeq
-    |> List.ofSeq
+    Table.encodeRows site.Encode decoded |> Seq.map List.ofSeq |> List.ofSeq
 
   let readings =
     decoded |> List.map (fun s -> s.Id, s.Readings["jan"], s.Readings["feb"])
@@ -162,7 +162,7 @@ let ``dictionary codec encodes a missing key as an empty field`` () =
     Collections.Generic.Dictionary [ Collections.Generic.KeyValuePair("jan", Some 1.0) ]
 
   let encoded =
-    Table.encodeRows TableOptions.csv site.Encode [ { Id = 1; Readings = readings } ]
+    Table.encodeRows site.Encode [ { Id = 1; Readings = readings } ]
     |> Seq.map List.ofSeq
     |> List.ofSeq
 
@@ -171,7 +171,7 @@ let ``dictionary codec encodes a missing key as an empty field`` () =
 [<Test>]
 let ``row codec writes columns in declaration order`` () =
   let actual =
-    Table.encodeRows TableOptions.csv reading.Encode [ { Name = "a"; Temp = 1.5; Count = None } ]
+    Table.encodeRows reading.Encode [ { Name = "a"; Temp = 1.5; Count = None } ]
     |> Seq.map List.ofSeq
     |> List.ofSeq
 
@@ -185,17 +185,16 @@ let ``row codec round-trips through text`` () =
       { Name = "b, c"; Temp = -0.1; Count = None }
     ]
 
-  let text = Table.writeString TableOptions.csv reading.Encode values
+  let text = Table.writeString reading.Encode values
 
-  let actual =
-    Table.read TableOptions.csv reading.Decode (Source.Text text) |> List.ofSeq
+  let actual = Table.read reading.Decode (Source.Text text) |> List.ofSeq
 
   test <@ actual = List.map Ok values @>
 
 [<Test>]
 let ``row codec reports every bad field`` () =
   let actual =
-    Table.read TableOptions.csv reading.Decode (Source.Text "name,temp,count\na,hot,many\n")
+    Table.read reading.Decode (Source.Text "name,temp,count\na,hot,many\n")
     |> Seq.map (Result.mapError (List.map _.Problem))
     |> List.ofSeq
 
@@ -213,8 +212,7 @@ let ``row codec reports every bad field`` () =
 [<Test>]
 let ``row codec decodes a missing optional column as None`` () =
   let actual =
-    Table.read TableOptions.csv reading.Decode (Source.Text "name,temp\na,1\n")
-    |> List.ofSeq
+    Table.read reading.Decode (Source.Text "name,temp\na,1\n") |> List.ofSeq
 
   test <@ actual = [ Ok { Name = "a"; Temp = 1.0; Count = None } ] @>
 
@@ -224,6 +222,6 @@ type Tagged = Tagged of Reading
 let ``Codec.Row.map converts both directions`` () =
   let tagged = reading |> Codec.Row.map Tagged (fun (Tagged r) -> r)
   let value = Tagged { Name = "a"; Temp = 1.5; Count = Some 2 }
-  let text = Table.writeString TableOptions.csv tagged.Encode [ value ]
+  let text = Table.writeString tagged.Encode [ value ]
   test <@ text.StartsWith "name,temp,count" @>
-  test <@ Table.read TableOptions.csv tagged.Decode (Source.Text text) |> List.ofSeq = [ Ok value ] @>
+  test <@ Table.read tagged.Decode (Source.Text text) |> List.ofSeq = [ Ok value ] @>
