@@ -168,6 +168,53 @@ let ``dictionary codec encodes a missing key as an empty field`` () =
 
   test <@ encoded = [ [ "id"; "jan"; "feb" ]; [ "1"; "1"; "" ] ] @>
 
+type Pair = { First: int; Second: int }
+
+[<Test>]
+let ``fieldOccurrence codecs round-trip a repeated header`` () =
+  let pair =
+    codec {
+      let! first = Codec.fieldOccurrence "x" 0 Codec.int _.First
+      and! second = Codec.fieldOccurrence "x" 1 Codec.int _.Second
+      return { First = first; Second = second }
+    }
+
+  let lines = [ [ "x"; "x" ]; [ "1"; "2" ] ]
+
+  let decoded = Table.decodeRows pair.Decode (Seq.map Seq.ofList lines) |> List.ofSeq
+
+  let encoded =
+    Table.encodeRows pair.Encode [ { First = 1; Second = 2 } ]
+    |> Seq.map List.ofSeq
+    |> List.ofSeq
+
+  test <@ decoded = [ Ok { First = 1; Second = 2 } ] @>
+  test <@ encoded = lines @>
+
+type Monthly = { Id: int; Readings: Collections.Generic.Dictionary<string, int list> }
+
+[<Test>]
+let ``multiDictionary codec round-trips repeated headers`` () =
+  let monthly =
+    codec {
+      let! id = Codec.field "id" Codec.int _.Id
+      and! readings = Codec.multiDictionary [ "jan"; "feb"; "jan" ] Codec.int _.Readings
+      return { Id = id; Readings = readings }
+    }
+
+  let lines = [ [ "id"; "jan"; "feb"; "jan" ]; [ "1"; "10"; "20"; "11" ] ]
+
+  let decoded =
+    Table.decodeRows monthly.Decode (Seq.map Seq.ofList lines)
+    |> Seq.choose Result.toOption
+    |> List.ofSeq
+
+  let encoded =
+    Table.encodeRows monthly.Encode decoded |> Seq.map List.ofSeq |> List.ofSeq
+
+  test <@ decoded |> List.map (fun m -> m.Readings["jan"], m.Readings["feb"]) = [ [ 10; 11 ], [ 20 ] ] @>
+  test <@ encoded = lines @>
+
 [<Test>]
 let ``row codec writes columns in declaration order`` () =
   let actual =

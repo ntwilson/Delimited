@@ -13,7 +13,7 @@ type Row =
       /// None when the table has no header row.
       Headers: string[] option
       HeaderComparer: StringComparer
-      Ordinals: IReadOnlyDictionary<string, int>
+      Ordinals: IReadOnlyDictionary<string, int[]>
       FieldCount: int
       GetString: int -> string
     }
@@ -28,21 +28,21 @@ module internal Row =
     Enumerable.GroupBy(source, Func<'a, 'key> projection, comparer)
     |> Seq.map (fun g -> g.Key, g :> 'a seq)
 
-  /// When headers repeat (as judged by `comparer`), the first one wins.
-  let ordinalsOf (comparer: StringComparer) (headers: string[] option) : IReadOnlyDictionary<string, int> =
-    // DEDUPE WITH THE COMPARER, NOT distinctBy: "Id" AND "ID" WOULD BOTH SURVIVE AND THE DICTIONARY WOULD THROW.
-    // GROUPS ARE NEVER EMPTY, SO Seq.head IS THE FIRST OCCURRENCE.
+  /// Every index of each header, in column order. Headers that `comparer` deems equal share one entry.
+  let ordinalsOf (comparer: StringComparer) (headers: string[] option) : IReadOnlyDictionary<string, int[]> =
+    // GROUP WITH THE COMPARER, NOT Seq.groupBy: "Id" AND "ID" WOULD BE SEPARATE GROUPS AND THE DICTIONARY WOULD THROW.
     headers
     |> Option.defaultValue [||]
     |> Seq.indexed
     |> groupBy comparer snd
-    |> Seq.map (fun (header, group) -> KeyValuePair(header, fst (Seq.head group)))
+    |> Seq.map (fun (header, group) -> KeyValuePair(header, group |> Seq.map fst |> Seq.toArray))
     |> fun kvs -> Dictionary(kvs, comparer) :> IReadOnlyDictionary<_, _>
 
-  let tryOrdinal (header: string) (row: Row) : int voption =
+  /// Empty when the header isn't in the table.
+  let ordinals (header: string) (row: Row) : int[] =
     match row.Ordinals.TryGetValue header with
-    | true, i -> ValueSome i
-    | false, _ -> ValueNone
+    | true, indexes -> indexes
+    | false, _ -> [||]
 
   let tryGet (index: int) (row: Row) : string voption =
     if index >= 0 && index < row.FieldCount then
@@ -54,7 +54,7 @@ module internal Row =
     (number: int64)
     (headers: string[] option)
     (comparer: StringComparer)
-    (ordinals: IReadOnlyDictionary<string, int>)
+    (ordinals: IReadOnlyDictionary<string, int[]>)
     (values: string[])
     : Row =
     {

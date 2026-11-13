@@ -41,6 +41,15 @@ let ``dictionary writes empty for a missing key`` () =
   test <@ actual = [ [ "a"; "b" ]; [ "1"; "" ] ] @>
 
 [<Test>]
+let ``multiDictionary writes the nth value to a header's nth column and empty when there is none`` () =
+  let d = Dictionary<string, string list>(dict [ "a", [ "1"; "2" ]; "b", [ "3" ] ])
+
+  let actual =
+    encode (Encode.multiDictionary [ "a"; "b"; "a"; "b"; "c" ] Encode.string) [ d ]
+
+  test <@ actual = [ [ "a"; "b"; "a"; "b"; "c" ]; [ "1"; "3"; "2"; ""; "" ] ] @>
+
+[<Test>]
 let ``a row decoded as a dictionary encodes back to the same row`` () =
   let lines = [ [ "a"; "b" ]; [ "1"; "2" ] ]
 

@@ -90,6 +90,26 @@ module Encode =
         | true, v -> encoder v
         | false, _ -> "")
 
+  /// List a header once per column to write; its nth column writes the nth value. A missing key or value writes an
+  /// empty field.
+  let multiDictionary<'dict, 'a when 'dict :> IDictionary<string, 'a list>>
+    (headers: string list)
+    (encoder: FieldEncoder<'a>)
+    : RowEncoder<'dict> =
+    headers
+    |> List.mapi (fun i h ->
+      let occurrence = headers |> List.take i |> List.filter ((=) h) |> List.length
+
+      h,
+      fun (d: 'dict) ->
+        match d.TryGetValue h with
+        | true, values ->
+          values
+          |> List.tryItem occurrence
+          |> Option.map encoder
+          |> Option.defaultValue ""
+        | false, _ -> "")
+
   /// Positional; a short row writes empty fields.
   let fields (headers: string list) : RowEncoder<string[]> =
     headers

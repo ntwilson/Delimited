@@ -217,17 +217,57 @@ let ``Row.fail fails every row with its message`` () =
     @>
 
 [<Test>]
-let ``a repeated header reads its first column`` () =
-  let lines = rows [ [ "a"; "a" ]; [ "1"; "2" ] ]
+let ``a repeated header is ambiguous to field, optionalField, and dictionary`` () =
+  let lines = rows [ [ "a"; "a"; "b" ]; [ "1"; "2"; "3" ] ]
 
-  let field = Table.decodeRows (Decode.field "a" Decode.int) lines |> List.ofSeq
+  let ambiguous: Result<int, _> =
+    Error [ { Row = 1; Problem = AmbiguousHeader("a", [ 0; 1 ]) } ]
 
-  let dictionary =
-    Table.decodeRows (Decode.dictionary Decode.int |> Decode.Row.map (fun d -> d["a"], d.Count)) lines
-    |> List.ofSeq
+  let decode (d: RowDecoder<int>) = Table.decodeRows d lines |> List.ofSeq
 
-  test <@ field = [ Ok 1 ] @>
-  test <@ dictionary = [ Ok(1, 1) ] @>
+  test <@ decode (Decode.field "a" Decode.int) = [ ambiguous ] @>
+  test <@ decode (Decode.optionalField "a" Decode.int |> Decode.Row.map Option.get) = [ ambiguous ] @>
+  test <@ decode (Decode.dictionary Decode.int |> Decode.Row.map _.Count) = [ ambiguous ] @>
+  test <@ decode (Decode.dictionaryOf [ "a" ] Decode.int |> Decode.Row.map _.Count) = [ ambiguous ] @>
+  test <@ decode (Decode.field "b" Decode.int) = [ Ok 3 ] @>
+
+[<Test>]
+let ``fieldOccurrence picks a 0-based occurrence of a header`` () =
+  let lines = rows [ [ "a"; "b"; "a" ]; [ "1"; "2"; "3" ] ]
+  let decode (d: RowDecoder<int>) = Table.decodeRows d lines |> List.ofSeq
+
+  test <@ decode (Decode.fieldOccurrence "a" 0 Decode.int) = [ Ok 1 ] @>
+  test <@ decode (Decode.fieldOccurrence "a" 1 Decode.int) = [ Ok 3 ] @>
+  test <@ decode (Decode.fieldOccurrence "b" 0 Decode.int) = [ Ok 2 ] @>
+
+  test
+    <@
+      decode (Decode.fieldOccurrence "a" 2 Decode.int) =
+        [ Error [ { Row = 1; Problem = OccurrenceNotFound("a", 2, 2) } ] ]
+    @>
+
+  test <@ decode (Decode.fieldOccurrence "c" 0 Decode.int) = [ Error [ { Row = 1; Problem = ColumnNotFound "c" } ] ] @>
+  raises<System.ArgumentException> <@ Decode.fieldOccurrence "a" -1 Decode.int @>
+
+[<Test>]
+let ``multiDictionary maps each header to every column it names, in table order`` () =
+  let lines = rows [ [ "a"; "b"; "a" ]; [ "1"; "2"; "3" ] ]
+
+  let decode (d: RowDecoder<System.Collections.Generic.Dictionary<string, int list>>) =
+    let entries =
+      Seq.map (fun (kv: System.Collections.Generic.KeyValuePair<_, _>) -> kv.Key, kv.Value)
+      >> List.ofSeq
+
+    Table.decodeRows (d |> Decode.Row.map entries) lines |> List.ofSeq
+
+  test <@ decode (Decode.multiDictionary Decode.int) = [ Ok [ "a", [ 1; 3 ]; "b", [ 2 ] ] ] @>
+  test <@ decode (Decode.multiDictionaryOf [ "a"; "a" ] Decode.int) = [ Ok [ "a", [ 1; 3 ] ] ] @>
+
+  test
+    <@
+      decode (Decode.multiDictionaryOf [ "a"; "c" ] Decode.int) =
+        [ Error [ { Row = 1; Problem = ColumnNotFound "c" } ] ]
+    @>
 
 [<Test>]
 let ``describe formats each problem`` () =
@@ -247,6 +287,18 @@ let ``describe formats each problem`` () =
     @>
 
   test <@ DecodeError.describe { Row = 3; Problem = RowFailed "nope" } = "Row 3: nope" @>
+
+  test
+    <@
+      DecodeError.describe { Row = 3; Problem = AmbiguousHeader("a", [ 0; 2 ]) } =
+        "Row 3: column \"a\" appears more than once (columns 0, 2); use fieldOccurrence to pick one"
+    @>
+
+  test
+    <@
+      DecodeError.describe { Row = 3; Problem = OccurrenceNotFound("a", 2, 2) } =
+        "Row 3: column \"a\" appears 2 time(s), so it has no occurrence 2 (0-based)"
+    @>
 
 [<Test>]
 let ``either takes the first success`` () =
@@ -422,23 +474,42 @@ let ``dateTimeAuto accepts common formats`` () =
   test <@ Decode.dateTimeAuto "03/14/2026 13:45" = Ok(System.DateTime(2026, 3, 14, 13, 45, 0)) @>
   test <@ Decode.dateTimeAuto "nope" = Error "Expected a date/time but got \"nope\"" @>
 
+// DateTime EQUALITY IGNORES Kind, SO THESE TESTS COMPARE IT EXPLICITLY.
 [<Test>]
-let ``dateTimeAuto keeps a UTC timestamp in UTC`` () =
-  test
-    <@ Decode.dateTimeAuto "2026-03-14T10:00:00Z" = Ok(System.DateTime(2026, 3, 14, 10, 0, 0, System.DateTimeKind.Utc)) @>
+let ``dateTime and dateTimeAuto convert an offset or Z to UTC regardless of the machine's time zone`` () =
+  let withKind (d: System.DateTime) = d, d.Kind
+  let decoders = [ Decode.dateTime "yyyy-MM-dd'T'HH:mm:ssK"; Decode.dateTimeAuto ]
 
-  test <@ Decode.dateTimeAuto "2026-03-14T10:00:00Z" |> Result.map _.Kind = Ok System.DateTimeKind.Utc @>
+  let decodeAll s =
+    decoders |> List.map (fun d -> d s |> Result.map withKind)
+
+  let utc h : Result<_, string> =
+    Ok(System.DateTime(2026, 3, 14, h, 0, 0), System.DateTimeKind.Utc)
+
+  test <@ decodeAll "2026-03-14T10:00:00Z" = [ utc 10; utc 10 ] @>
+  test <@ decodeAll "2026-03-14T10:00:00+00:00" = [ utc 10; utc 10 ] @>
+  // 10:00 -05:00 -> 15:00 UTC
+  test <@ decodeAll "2026-03-14T10:00:00-05:00" = [ utc 15; utc 15 ] @>
+
+  let unspecified: Result<_, string> =
+    Ok(System.DateTime(2026, 3, 14, 10, 0, 0), System.DateTimeKind.Unspecified)
+
+  test <@ decodeAll "2026-03-14T10:00:00" = [ unspecified; unspecified ] @>
 
 [<Test>]
-let ``dateTimeOffsetAuto keeps the offset`` () =
-  test
-    <@
-      Decode.dateTimeOffsetAuto "2026-03-14T10:00:00+02:00" =
-        Ok(System.DateTimeOffset(2026, 3, 14, 10, 0, 0, System.TimeSpan.FromHours 2.0))
-    @>
+let ``dateTimeOffset and dateTimeOffsetAuto keep an offset and read its absence as UTC`` () =
+  let decoders =
+    [ Decode.dateTimeOffset "yyyy-MM-dd'T'HH:mm:ssK"; Decode.dateTimeOffsetAuto ]
 
-  test
-    <@ Decode.dateTimeOffsetAuto "2026-03-14T10:00:00+02:00" |> Result.map _.Offset = Ok(System.TimeSpan.FromHours 2.0) @>
+  let decodeAll s =
+    decoders |> List.map (fun d -> d s |> Result.map (fun d -> d, d.Offset))
+
+  let at (offset: float) : Result<_, string> =
+    let o = System.TimeSpan.FromHours offset
+    Ok(System.DateTimeOffset(2026, 3, 14, 10, 0, 0, o), o)
+
+  test <@ decodeAll "2026-03-14T10:00:00+02:00" = [ at 2.0; at 2.0 ] @>
+  test <@ decodeAll "2026-03-14T10:00:00" = [ at 0.0; at 0.0 ] @>
 
 #if !LIBRARY_NETSTANDARD
 [<Test>]
@@ -623,11 +694,15 @@ let ``withCaseInsensitiveHeaders applies when reading text`` () =
   test <@ actual = [ Ok "a" ] @>
 
 [<Test>]
-let ``headers differing only in case keep the first column when matching case-insensitively`` () =
-  let actual =
-    Table.decodeRowsWithOptions caseInsensitive (Decode.field "id" Decode.int) (rows [ [ "Id"; "ID" ]; [ "1"; "2" ] ])
+let ``headers differing only in case repeat when matching case-insensitively`` () =
+  let decode (d: RowDecoder<int>) =
+    Table.decodeRowsWithOptions caseInsensitive d (rows [ [ "Id"; "ID" ]; [ "1"; "2" ] ])
+    |> List.ofSeq
 
-  test <@ List.ofSeq actual = [ Ok 1 ] @>
+  test
+    <@ decode (Decode.field "id" Decode.int) = [ Error [ { Row = 1; Problem = AmbiguousHeader("id", [ 0; 1 ]) } ] ] @>
+
+  test <@ decode (Decode.fieldOccurrence "id" 1 Decode.int) = [ Ok 2 ] @>
 
 [<Test>]
 let ``case-insensitive dictionaries read each column once and look up keys in any case`` () =
@@ -643,7 +718,15 @@ let ``case-insensitive dictionaries read each column once and look up keys in an
     Table.decodeRowsWithOptions
       caseInsensitive
       (Decode.dictionary Decode.int |> Decode.Row.map lookups)
+      (rows [ [ "a"; "B" ]; [ "1"; "2" ] ])
+
+  let multi =
+    Table.decodeRowsWithOptions
+      caseInsensitive
+      (Decode.multiDictionary Decode.int
+       |> Decode.Row.map (fun d -> d.Count, d["A"], d["b"]))
       (rows [ [ "a"; "A"; "B" ]; [ "1"; "9"; "2" ] ])
 
   test <@ List.ofSeq listed = [ Ok(2, 1, 2) ] @>
   test <@ List.ofSeq every = [ Ok(2, 1, 2) ] @>
+  test <@ List.ofSeq multi = [ Ok(2, [ 1; 9 ], [ 2 ]) ] @>

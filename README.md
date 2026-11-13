@@ -122,8 +122,15 @@ Dynamic shapes are ordinary decoders and encoders, so they work with every sourc
 - `Decode.dictionaryOf headers Decode.string` gives only the listed columns, each of which must exist
 - `Encode.fields headers` writes `string[]`; `Encode.dictionary headers Encode.string` writes `IDictionary<string, string>`
 - `Codec.dictionary headers Codec.float _.Readings` combines the two inside `codec { }`; use `Codec.option` when cells can be blank
+- `Decode.multiDictionary`, `multiDictionaryOf`, `Encode.multiDictionary` and `Codec.multiDictionary` do the same with `Dictionary<string, 'a list>`, for headers that repeat
 - `Table.withReaderAsync source (fun csvDataReader -> task { ... })` gives you Sylvan's raw `CsvDataReader`
 - `Table.writeDataReader sink dbDataReader` (and `writeDataReaderAsync`) writes any `DbDataReader`, such as query results, without an encoder
+
+## Repeated headers
+
+A header that names more than one column is an `AmbiguousHeader` error for `field`, `optionalField`, `dictionary` and `dictionaryOf`. `Decode.fieldOccurrence "x" 1 Decode.int` (or `Codec.fieldOccurrence`) reads the second `x` column, and the `multiDictionary` functions above read all of them.
+
+A row that fails only because of the headers (a column that's missing, repeated, or unnamed) is the last one read, since every later row would fail the same way. A row that also has a bad value doesn't end the read.
 
 ## Options
 

@@ -124,6 +124,30 @@ let ``readAll returns the passing rows and the errors from every failing row in 
   test <@ values = [ { Id = 1; Text = "a" }; { Id = 3; Text = "c" } ] @>
   test <@ errors |> List.map _.Row = [ 2L; 4L ] @>
 
+let withMissingColumn: RowDecoder<Note * int> =
+  decoder {
+    let! note = noteCodec.Decode
+    and! extra = Decode.field "missing" Decode.int
+    return note, extra
+  }
+
+[<Test>]
+let ``a row failing only on the headers is the last one read`` () =
+  let notFound = [ { Row = 1L; Problem = ColumnNotFound "missing" } ]
+  let source = Source.Text "id,text\n1,a\n2,b\n3,c\n"
+
+  test <@ Table.readAll withMissingColumn source = ([], notFound) @>
+  test <@ (Table.readAllAsync withMissingColumn source).Result = ([], notFound) @>
+
+  let lines = [ [ "id"; "text" ]; [ "1"; "a" ]; [ "2"; "b" ] ] |> Seq.map Seq.ofList
+  test <@ Table.decodeRows withMissingColumn lines |> List.ofSeq = [ Error notFound ] @>
+
+[<Test>]
+let ``a row failing on the headers and a value keeps the read going`` () =
+  let bothFail = Table.readAll withMissingColumn (Source.Text "id,text\nx,a\nx,b\n")
+  let errorRows = snd bothFail |> List.map _.Row |> List.distinct
+  test <@ errorRows = [ 1L; 2L ] @>
+
 let silentFailure: RowDecoder<Note> = fun _ -> Error []
 
 [<Test>]

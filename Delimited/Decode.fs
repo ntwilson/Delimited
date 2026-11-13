@@ -14,6 +14,10 @@ type DecodeProblem =
   | InvalidValue of Column * value: string * message: string
   | RowFailed of message: string
   | NoHeaderRow
+  /// The header names more than one column; `indexes` are 0-based.
+  | AmbiguousHeader of header: string * indexes: int list
+  /// `occurrence` is 0-based; `count` is how many columns have the header.
+  | OccurrenceNotFound of header: string * occurrence: int * count: int
 
 type DecodeError = { Row: int64; Problem: DecodeProblem }
 
@@ -31,6 +35,11 @@ module DecodeError =
       | InvalidValue(c, value, message) -> $"%s{describeColumn c} has value \"%s{value}\": %s{message}"
       | RowFailed message -> message
       | NoHeaderRow -> "the table has no header row, so columns can't be found by name"
+      | AmbiguousHeader(header, indexes) ->
+        let columns = indexes |> List.map string |> String.concat ", "
+        $"column \"%s{header}\" appears more than once (columns %s{columns}); use fieldOccurrence to pick one"
+      | OccurrenceNotFound(header, occurrence, count) ->
+        $"column \"%s{header}\" appears %i{count} time(s), so it has no occurrence %i{occurrence} (0-based)"
 
     $"Row %i{e.Row}: %s{detail}"
 
@@ -139,23 +148,27 @@ module Decode =
 
   let guid: FieldDecoder<Guid> = ofTryParse "a GUID" (fun s -> Guid.TryParse s)
 
+  /// An offset or "Z" in the text converts the value to UTC (Kind = Utc), dropping the offset; without one, the
+  /// Kind is Unspecified. For data that has offsets, use `dateTimeOffset`, which keeps them.
   let dateTime (format: string) : FieldDecoder<DateTime> =
     ofTryParse $"a date/time formatted as %s{format}" (fun s ->
-      DateTime.TryParseExact(s, format, inv, DateTimeStyles.None))
+      DateTime.TryParseExact(s, format, inv, DateTimeStyles.AdjustToUniversal))
 
+  /// Text without an offset is read as UTC.
   let dateTimeOffset (format: string) : FieldDecoder<DateTimeOffset> =
     ofTryParse $"a date/time offset formatted as %s{format}" (fun s ->
-      DateTimeOffset.TryParseExact(s, format, inv, DateTimeStyles.None))
+      DateTimeOffset.TryParseExact(s, format, inv, DateTimeStyles.AssumeUniversal))
 
-
-  // WITHOUT RoundtripKind, A "Z" OR OFFSET SUFFIX WOULD BE CONVERTED TO THE MACHINE'S LOCAL TIME.
   /// Uses the invariant culture, so an ambiguous date like 03/04 is read month first.
+  /// An offset or "Z" in the text converts the value to UTC (Kind = Utc), dropping the offset; without one, the
+  /// Kind is Unspecified. For data that has offsets, use `dateTimeOffsetAuto`, which keeps them.
   let dateTimeAuto: FieldDecoder<DateTime> =
-    ofTryParse "a date/time" (fun s -> DateTime.TryParse(s, inv, DateTimeStyles.RoundtripKind))
+    ofTryParse "a date/time" (fun s -> DateTime.TryParse(s, inv, DateTimeStyles.AdjustToUniversal))
 
   /// Uses the invariant culture, so an ambiguous date like 03/04 is read month first.
+  /// Text without an offset is read as UTC.
   let dateTimeOffsetAuto: FieldDecoder<DateTimeOffset> =
-    ofTryParse "a date/time offset" (fun s -> DateTimeOffset.TryParse(s, inv, DateTimeStyles.None))
+    ofTryParse "a date/time offset" (fun s -> DateTimeOffset.TryParse(s, inv, DateTimeStyles.AssumeUniversal))
 
   /// A space may replace the "T". An offset is converted to UTC; without one, the Kind is Unspecified.
   let dateTimeIso: FieldDecoder<DateTime> =
@@ -240,18 +253,45 @@ module Decode =
       | Ok v -> Ok v
       | Error message -> Error { Row = row.Number; Problem = InvalidValue(column, s, message) }
 
+  /// Every index of the header; never empty when Ok.
+  let private indexesOf (header: string) (row: Row) : Result<int[], DecodeError> =
+    match row.Headers, Delimited.Row.ordinals header row with
+    | None, _ -> Error { Row = row.Number; Problem = NoHeaderRow }
+    | Some _, [||] -> Error { Row = row.Number; Problem = ColumnNotFound header }
+    | Some _, indexes -> Ok indexes
+
   let private singleField (header: string) (decoder: FieldDecoder<'a>) =
     fun row ->
-      match row.Headers, Delimited.Row.tryOrdinal header row with
-      | None, _ -> Error { Row = row.Number; Problem = NoHeaderRow }
-      | Some _, ValueSome i -> singleFieldAt i decoder row
-      | Some _, ValueNone -> Error { Row = row.Number; Problem = ColumnNotFound header }
+      match indexesOf header row with
+      | Ok [| i |] -> singleFieldAt i decoder row
+      | Ok indexes -> Error { Row = row.Number; Problem = AmbiguousHeader(header, List.ofArray indexes) }
+      | Error e -> Error e
 
-  /// The named column, which must exist.
+  /// The named column, which must exist exactly once.
   let field (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
     singleField header decoder >> Result.mapError List.singleton
 
-  /// None when the column is missing, the row is short, or the field matches `missing`. Fails if the table has no header row.
+  /// The `occurrence`th (0-based) column named `header`, for tables where a header repeats.
+  let fieldOccurrence (header: string) (occurrence: int) (decoder: FieldDecoder<'a>) : RowDecoder<'a> =
+    if occurrence < 0 then
+      invalidArg (nameof occurrence) "must be 0 or more"
+
+    fun row ->
+      match indexesOf header row with
+      | Ok indexes when occurrence < indexes.Length ->
+        singleFieldAt indexes.[occurrence] decoder row |> Result.mapError List.singleton
+      | Ok indexes ->
+        Error
+          [
+            {
+              Row = row.Number
+              Problem = OccurrenceNotFound(header, occurrence, indexes.Length)
+            }
+          ]
+      | Error e -> Error [ e ]
+
+  /// None when the column is missing, the row is short, or the field matches `missing`. Fails if the table has no
+  /// header row or the header repeats.
   let optionalFieldWith (missing: string) (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
     fun row ->
       match singleField header (optionWith missing decoder) row with
@@ -260,7 +300,8 @@ module Decode =
       | Error { Problem = ColumnNotFound _ } -> Ok None
       | Error e -> Error [ e ]
 
-  /// None when the column is missing, the row is short, or the field is blank. Fails if the table has no header row.
+  /// None when the column is missing, the row is short, or the field is blank. Fails if the table has no header row
+  /// or the header repeats.
   let optionalField (header: string) (decoder: FieldDecoder<'a>) : RowDecoder<'a option> =
     optionalFieldWith "" header decoder
 
@@ -272,24 +313,51 @@ module Decode =
   let fields: RowDecoder<string[]> =
     fun row -> Ok(Array.init row.FieldCount row.GetString)
 
-  /// The listed columns, keyed by header using `TableOptions.HeaderComparer`; each must exist. A repeated header is read once.
-  let dictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
+  let private keyedBy
+    (headers: string list)
+    (decodeHeader: string -> Row -> Result<'a, DecodeError list>)
+    : RowDecoder<Dictionary<string, 'a>> =
     fun row ->
       if row.Headers.IsNone then
         Error [ { Row = row.Number; Problem = NoHeaderRow } ]
       else
         let pairs, errors =
           Enumerable.Distinct(headers, row.HeaderComparer)
-          |> Seq.map (fun h -> field h decoder row |> Result.map (fun v -> KeyValuePair(h, v)))
+          |> Seq.map (fun h -> decodeHeader h row |> Result.map (fun v -> KeyValuePair(h, v)))
           |> Results.partition
 
         match errors with
         | [] -> Ok(Dictionary(pairs, row.HeaderComparer))
         | errors -> Error errors
 
-  /// Every column, keyed by header. A repeated header keeps its first value.
+  let private allHeaders (row: Row) =
+    row.Headers |> Option.defaultValue [||] |> List.ofArray
+
+  /// The listed columns, keyed by header using `TableOptions.HeaderComparer`; each must exist exactly once.
+  /// A header listed twice is read once. For headers that repeat in the table, use `multiDictionaryOf`.
+  let dictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
+    keyedBy headers (fun h -> field h decoder)
+
+  /// Every column, keyed by header. Fails if any header repeats; for that, use `multiDictionary`.
   let dictionary (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a>> =
-    fun row -> dictionaryOf (row.Headers |> Option.defaultValue [||] |> List.ofArray) decoder row
+    fun row -> dictionaryOf (allHeaders row) decoder row
+
+  /// Like `dictionaryOf`, but each header maps to every column it names, in table order.
+  let multiDictionaryOf (headers: string list) (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a list>> =
+    keyedBy headers (fun h row ->
+      match indexesOf h row with
+      | Error e -> Error [ e ]
+      | Ok indexes ->
+        let values, errors =
+          indexes
+          |> Seq.map (fun i -> singleFieldAt i decoder row |> Result.mapError List.singleton)
+          |> Results.partition
+
+        if List.isEmpty errors then Ok values else Error errors)
+
+  /// Every column, keyed by header; a header that repeats maps to all its columns, in table order.
+  let multiDictionary (decoder: FieldDecoder<'a>) : RowDecoder<Dictionary<string, 'a list>> =
+    fun row -> multiDictionaryOf (allHeaders row) decoder row
 
 type RowDecoderBuilder() =
   member _.Return(value: 'a) : RowDecoder<'a> = Decode.Row.succeed value

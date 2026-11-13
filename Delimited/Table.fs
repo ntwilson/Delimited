@@ -104,12 +104,41 @@ module Table =
         ]
     | result -> result
 
+  let private isHeaderProblem =
+    function
+    | ColumnNotFound _
+    | NoHeaderRow
+    | AmbiguousHeader _
+    | OccurrenceNotFound _ -> true
+    | MissingField _
+    | InvalidValue _
+    | RowFailed _ -> false
+
+  // "ALL", NOT "ANY": Decode.Row.either (field "new") (field "old") REPORTS "old" AS NOT FOUND ON ROWS WHERE "new"
+  // IS MERELY INVALID.
+  let private endsRead (result: Result<'a, DecodeError list>) =
+    match result with
+    | Error errors -> errors |> List.forall (fun e -> isHeaderProblem e.Problem)
+    | Ok _ -> false
+
+  /// A row failing only on the headers means every later row would fail the same way, so it's the last one read.
+  let private untilHeaderProblem (results: Result<'a, DecodeError list> seq) =
+    seq {
+      use e = results.GetEnumerator()
+      let more = ref true
+
+      while more.Value && e.MoveNext() do
+        yield e.Current
+        more.Value <- not (endsRead e.Current)
+    }
+
   let private orFail (result: Result<'a, DecodeError list>) : 'a =
     match result with
     | Ok v -> v
     | Error errors -> raise (DecodeException errors)
 
   /// Streams decoded rows. The source is opened when enumeration starts and closed when it ends.
+  /// A row that fails only because of the headers (a column missing, repeated, or unnamed) is the last one read.
   let readAsyncWithOptions
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
@@ -133,7 +162,9 @@ module Table =
 
         if hasRow then
           number <- number + 1L
-          yield decodeRow decoder (rowOf options number headers ordinals csv)
+          let result = decodeRow decoder (rowOf options number headers ordinals csv)
+          yield result
+          more <- not (endsRead result)
         else
           more <- false
     }
@@ -167,6 +198,7 @@ module Table =
         Seq.unfold (fun i -> Some(i, i + 1L)) 1L
         |> Seq.takeWhile (fun _ -> csv.Read())
         |> Seq.map (fun number -> decodeRow decoder (rowOf options number headers ordinals csv))
+        |> untilHeaderProblem
     }
 
   /// `readWithOptions` with `TableOptions.defaults`.
@@ -301,6 +333,7 @@ module Table =
     }
 
   /// Decodes rows that are already split into fields. With headers, the first row is the header row.
+  /// Like `read`, a row that fails only because of the headers is the last one decoded.
   let decodeRowsWithOptions
     (options: TableOptions)
     (decoder: RowDecoder<'a>)
@@ -325,6 +358,7 @@ module Table =
             decodeRow
               decoder
               (Row.ofArray (int64 (i + 1)) headers options.HeaderComparer ordinals (Seq.toArray values)))
+          |> untilHeaderProblem
     }
 
   /// `decodeRowsWithOptions` with `TableOptions.defaults`.

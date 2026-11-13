@@ -62,6 +62,7 @@ module Codec =
   let bool: FieldCodec<bool> = Field.create Decode.bool Encode.bool
   let guid: FieldCodec<System.Guid> = Field.create Decode.guid Encode.guid
 
+  /// An offset in the text decodes as UTC, dropping the offset. For data that has offsets, use `dateTimeOffset`.
   let dateTime (format: string) : FieldCodec<System.DateTime> =
     Field.create (Decode.dateTime format) (Encode.dateTime format)
 
@@ -111,9 +112,19 @@ module Codec =
   let choiceOf2 (left: FieldCodec<'a>) (right: FieldCodec<'b>) : FieldCodec<Choice<'a, 'b>> =
     Field.create (Decode.choiceOf2 left.Decode right.Decode) (Encode.choiceOf2 left.Encode right.Encode)
 
-  /// The named column, which must exist when decoding.
+  /// The named column, which must exist exactly once when decoding.
   let field (header: string) (codec: FieldCodec<'field>) (getter: 'record -> 'field) : PartialCodec<'record, 'field> =
     partial (Decode.field header codec.Decode) (Encode.field header codec.Encode getter)
+
+  /// The `occurrence`th (0-based) column named `header`, for tables where a header repeats.
+  /// COLUMNS ARE WRITTEN IN CODEC ORDER, SO LIST A HEADER'S OCCURRENCES IN ORDER OR THEY WON'T ROUND-TRIP.
+  let fieldOccurrence
+    (header: string)
+    (occurrence: int)
+    (codec: FieldCodec<'field>)
+    (getter: 'record -> 'field)
+    : PartialCodec<'record, 'field> =
+    partial (Decode.fieldOccurrence header occurrence codec.Decode) (Encode.field header codec.Encode getter)
 
   /// Decodes None when the column is missing, the row is short, or the field matches `missing`; None encodes to `missing`.
   let optionalFieldWith
@@ -134,7 +145,8 @@ module Codec =
     : PartialCodec<'record, 'field option> =
     optionalFieldWith "" header codec getter
 
-  /// The listed columns, each of which must exist when decoding. A key missing from the dictionary encodes to an empty field.
+  /// The listed columns, each of which must exist exactly once when decoding. A header listed twice is written once,
+  /// and a key missing from the dictionary encodes to an empty field. For headers that repeat, use `multiDictionary`.
   let dictionary
     (headers: string list)
     (codec: FieldCodec<'a>)
@@ -145,6 +157,17 @@ module Codec =
     partial
       (Decode.dictionaryOf headers codec.Decode)
       (Encode.dictionary headers codec.Encode |> Encode.Row.contramap getter)
+
+  /// Each header maps to every column it names. List a header once per column to write; decoding reads every
+  /// column with a listed header, however many the table has.
+  let multiDictionary
+    (headers: string list)
+    (codec: FieldCodec<'a>)
+    (getter: 'record -> Dictionary<string, 'a list>)
+    : PartialCodec<'record, Dictionary<string, 'a list>> =
+    partial
+      (Decode.multiDictionaryOf headers codec.Decode)
+      (Encode.multiDictionary headers codec.Encode |> Encode.Row.contramap getter)
 
 /// NO Bind: ENCODING NEEDS THE FULL COLUMN LIST BEFORE ANY ROW, SO LATER COLUMNS CAN'T DEPEND ON DECODED VALUES.
 type RowCodecBuilder() =
