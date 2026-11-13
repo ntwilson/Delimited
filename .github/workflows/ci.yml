@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build library
+        run: dotnet build Delimited/Delimited.fsproj -c Release
+
+      # RELEASE ONLY: DEBUG BUILDS MISCOMPILE taskSeq CODE THAT AWAITS REAL ASYNC IO.
+      - name: Test
+        run: dotnet test Tests/Tests.fsproj -c Release
+
+      - name: Test netstandard2.1 build
+        run: dotnet test Tests/Tests.fsproj -c Release -p:LibraryTarget=netstandard2.1
+
+      - name: Pack and test package
+        shell: pwsh
+        run: ./test-package.ps1
+
+  check-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check formatting
+        run: |
+          dotnet tool restore
+          dotnet fantomas --check .
