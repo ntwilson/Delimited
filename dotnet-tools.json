@@ -8,6 +8,13 @@
         "fantomas"
       ],
       "rollForward": false
+    },
+    "fsix.cli": {
+      "version": "0.1.3",
+      "commands": [
+        "fsix"
+      ],
+      "rollForward": false
     }
   }
 }

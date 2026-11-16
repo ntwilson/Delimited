@@ -4,6 +4,8 @@
     <TargetFrameworks>netstandard2.1;net6.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <!-- FSIX LOADS bin/ DLLS BEFORE IT REFERENCES NUGET PACKAGES, SO DEPENDENCIES MUST SIT BESIDE THEM. -->
+    <CopyLocalLockFileAssemblies Condition="'$(Configuration)' == 'Debug'">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <PropertyGroup>

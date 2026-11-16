@@ -5,6 +5,8 @@
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <GenerateProgramFile>false</GenerateProgramFile>
+    <!-- FSIX LOADS bin/ DLLS BEFORE IT REFERENCES NUGET PACKAGES, SO DEPENDENCIES MUST SIT BESIDE THEM. -->
+    <CopyLocalLockFileAssemblies Condition="'$(Configuration)' == 'Debug'">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <!-- THE REFERENCE RESOLVES TO net6.0 BY DEFAULT, SO netstandard2.1 RUNS ONLY WITH -p:LibraryTarget=netstandard2.1. -->
